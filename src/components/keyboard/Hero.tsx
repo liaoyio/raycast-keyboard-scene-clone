@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import { useCallback, useState, useSyncExternalStore } from "react";
 
+import { DebugPanel } from "./debug";
 import { VideoDialog } from "./VideoDialog";
 
 const DESKTOP_QUERY = "(min-width: 1001px)";
@@ -120,6 +121,7 @@ export function Hero() {
       </section>
 
       {videoOpen ? <VideoDialog onClose={closeVideo} /> : null}
+      <DebugPanel />
     </>
   );
 }

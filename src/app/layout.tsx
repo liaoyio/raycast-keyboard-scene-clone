@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import type { ReactNode } from "react";
+import "dialkit/styles.css";
 
 import "../components/keyboard/styles.css";
 

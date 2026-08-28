@@ -14,19 +14,15 @@ import * as THREE from "three";
 
 import {
   BASE_TEXTURE_URL,
-  CAMERA_LOOK_AT,
   CAMERA_START,
-  CAMERA_TARGET_POSITION,
-  KEY_PRESS_DEPTH,
   LOCAL_PRESS_AXIS,
   MAX_FRAME_DELTA,
   MAX_PULSES,
   MODEL_URL,
-  PRESSED_KEY_DIMMING,
-  PULSE_DURATION,
   RGB_TEXTURE_URL,
 } from "./constants";
 import { useKeyboardInput } from "./input";
+import { useSceneControls, type SceneControls } from "./debug";
 import {
   configureKeyboardTextures,
   createKeyboardMaterial,
@@ -58,6 +54,7 @@ interface KeyboardMeshState {
 interface CameraRigProps {
   readyRef: MutableValueRef<boolean>;
   activeRef: MutableValueRef<boolean>;
+  controls: SceneControls["camera"];
 }
 
 interface KeyboardModelProps {
@@ -65,6 +62,7 @@ interface KeyboardModelProps {
   activeRef: MutableValueRef<boolean>;
   onReadyRef: MutableValueRef<(() => void) | undefined>;
   readyRef: MutableValueRef<boolean>;
+  controls: SceneControls;
 }
 
 const CANVAS_STYLE: CSSProperties = {
@@ -76,34 +74,51 @@ const CANVAS_STYLE: CSSProperties = {
   touchAction: "none",
 };
 
+const CAMERA_LOOK_AT_VECTOR = new THREE.Vector3();
+const PULSE_WORLD_POSITION = new THREE.Vector3();
+
 function isMesh(child: THREE.Object3D): child is THREE.Mesh<THREE.BufferGeometry> {
   return "isMesh" in child && child.isMesh === true;
 }
 
-function CameraRig({ readyRef, activeRef }: CameraRigProps) {
+function CameraRig({ readyRef, activeRef, controls }: CameraRigProps) {
   useFrame((state, frameDelta) => {
     if (!readyRef.current || !activeRef.current) return;
 
     const delta = Math.min(frameDelta, MAX_FRAME_DELTA);
     state.camera.position.x = THREE.MathUtils.damp(
       state.camera.position.x,
-      CAMERA_TARGET_POSITION.x,
-      4.5,
+      controls.targetX,
+      controls.damping,
       delta,
     );
     state.camera.position.y = THREE.MathUtils.damp(
       state.camera.position.y,
-      CAMERA_TARGET_POSITION.y,
-      4.5,
+      controls.targetY,
+      controls.damping,
       delta,
     );
     state.camera.position.z = THREE.MathUtils.damp(
       state.camera.position.z,
-      CAMERA_TARGET_POSITION.z,
-      4.5,
+      controls.targetZ,
+      controls.damping,
       delta,
     );
-    state.camera.lookAt(CAMERA_LOOK_AT);
+
+    if (state.camera instanceof THREE.PerspectiveCamera) {
+      if (state.camera.fov !== controls.fov) {
+        state.camera.fov = controls.fov;
+        state.camera.updateProjectionMatrix();
+      }
+    }
+
+    state.camera.lookAt(
+      CAMERA_LOOK_AT_VECTOR.set(
+        controls.lookAtX,
+        controls.lookAtY,
+        controls.lookAtZ,
+      ),
+    );
   });
 
   return null;
@@ -145,6 +160,7 @@ function KeyboardModel({
   activeRef,
   onReadyRef,
   readyRef,
+  controls,
 }: KeyboardModelProps) {
   const { scene } = useGLTF(MODEL_URL);
   const [baseTexture, rgbTexture] = useTexture(
@@ -171,12 +187,14 @@ function KeyboardModel({
   const triggerPulse = useCallback(
     (code: string) => {
       const mesh = meshByName.get(code);
-      if (!mesh) return;
+      if (!mesh?.object) return;
+
+      mesh.object.getWorldPosition(PULSE_WORLD_POSITION);
 
       const pulseIndex = pulseCursorRef.current;
       sharedUniforms.uPulseCenters.value[pulseIndex].set(
-        mesh.rest.x,
-        mesh.rest.z,
+        PULSE_WORLD_POSITION.x,
+        PULSE_WORLD_POSITION.z,
       );
       sharedUniforms.uPulseProgress.value[pulseIndex] = 0;
       pulseCursorRef.current = (pulseIndex + 1) % MAX_PULSES;
@@ -188,6 +206,21 @@ function KeyboardModel({
     enabled: active,
     onPress: triggerPulse,
   });
+
+  useEffect(() => {
+    sharedUniforms.uDefaultLighting.value = controls.defaultLighting;
+    sharedUniforms.uLightingIntensity.value = controls.lightingIntensity;
+    sharedUniforms.uEasingStrength.value = controls.pulseEasingStrength;
+    sharedUniforms.uFeather.value = controls.pulseFeather;
+    sharedUniforms.uRadius.value = controls.pulseRadius;
+  }, [
+    controls.defaultLighting,
+    controls.lightingIntensity,
+    controls.pulseEasingStrength,
+    controls.pulseFeather,
+    controls.pulseRadius,
+    sharedUniforms,
+  ]);
 
   useEffect(
     () => () => {
@@ -216,19 +249,24 @@ function KeyboardModel({
       if (progress < 1) {
         sharedUniforms.uPulseProgress.value[index] = Math.min(
           1,
-          progress + delta / PULSE_DURATION,
+          progress + delta / controls.pulseDuration,
         );
       }
     }
 
     for (const mesh of meshes) {
       const targetDepth = pressedKeysRef.current.has(mesh.name)
-        ? KEY_PRESS_DEPTH
+        ? controls.keyPressDepth
         : 0;
 
       if (targetDepth === 0 && mesh.depth === 0) continue;
 
-      mesh.depth = THREE.MathUtils.damp(mesh.depth, targetDepth, 55, delta);
+      mesh.depth = THREE.MathUtils.damp(
+        mesh.depth,
+        targetDepth,
+        controls.advanced.keyPressDamping,
+        delta,
+      );
       if (targetDepth === 0 && mesh.depth < 0.00001) mesh.depth = 0;
 
       if (mesh.object) {
@@ -238,15 +276,31 @@ function KeyboardModel({
       }
 
       if (!mesh.isStatic) {
-        const pressedAmount = Math.min(1, mesh.depth / KEY_PRESS_DEPTH);
+        const pressDepth = Math.max(controls.keyPressDepth, 0.0001);
+        const pressedAmount = Math.min(
+          1,
+          mesh.depth / pressDepth,
+        );
         mesh.material.uniforms.uDim.value =
-          1 - pressedAmount * PRESSED_KEY_DIMMING;
+          1 - pressedAmount * controls.pressedKeyDimming;
       }
     }
   });
 
   return (
-    <group>
+    <group
+      position={[
+        controls.model.positionX,
+        controls.model.positionY,
+        controls.model.positionZ,
+      ]}
+      rotation={[
+        THREE.MathUtils.degToRad(controls.model.rotationX),
+        THREE.MathUtils.degToRad(controls.model.rotationY),
+        THREE.MathUtils.degToRad(controls.model.rotationZ),
+      ]}
+      scale={controls.model.scale}
+    >
       {meshes.map((mesh) => (
         <mesh
           key={mesh.name}
@@ -270,6 +324,7 @@ export default function Scene({
   active = true,
   onReady,
 }: SceneProps) {
+  const controls = useSceneControls();
   const readyRef = useRef(false);
   const activeRef = useRef(active);
   const onReadyRef = useRef(onReady);
@@ -285,18 +340,23 @@ export default function Scene({
   return (
     <Canvas
       flat
-      camera={{ position: CAMERA_START, fov: 20 }}
+      camera={{ position: CAMERA_START, fov: controls.camera.fov }}
       dpr={[1, 2]}
       resize={{ offsetSize: true }}
       style={CANVAS_STYLE}
     >
-      <CameraRig readyRef={readyRef} activeRef={activeRef} />
+      <CameraRig
+        readyRef={readyRef}
+        activeRef={activeRef}
+        controls={controls.camera}
+      />
       <Suspense fallback={null}>
         <KeyboardModel
           active={active}
           activeRef={activeRef}
           onReadyRef={onReadyRef}
           readyRef={readyRef}
+          controls={controls}
         />
       </Suspense>
     </Canvas>
