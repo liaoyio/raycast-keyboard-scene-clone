@@ -35,6 +35,10 @@ KeyboardEvent.code / 鼠标命中 mesh
   → 基础纹理与 RGB 纹理按扩散圆形 mask 混合
 ```
 
+更完整的实现原理、Shader 数学、输入状态机、性能取舍与验证清单见：
+
+- [键盘交互实现拆解](docs/keyboard-interaction.md)
+
 ## 本地运行
 
 ```bash
