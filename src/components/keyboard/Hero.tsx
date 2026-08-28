@@ -79,7 +79,9 @@ export function Hero() {
           </p>
         </div>
 
-        <div className="sceneSlot styles-module__u2wRGq__sceneSlot">
+        <div
+          className={`sceneSlot styles-module__u2wRGq__sceneSlot ${sceneReady ? "scene-slot-ready" : ""}`}
+        >
           <div className="static-scene">
             <Image
               className="scene-bg"
