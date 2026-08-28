@@ -4,18 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build && node scripts/prepare-sites-build.mjs",
-    "preview": "vite preview",
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build && node scripts/prepare-sites-build.mjs",
+    "typecheck": "tsc --noEmit",
     "test:sites": "node --test tests/sites-worker.test.mjs"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
     "@react-three/fiber": "^9.7.0",
-    "@vitejs/plugin-react": "5.0.4",
+    "next": "16.3.3",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "three": "^0.185.1",
-    "vite": "6.4.2"
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "@types/three": "^0.185.4",
+    "typescript": "^5.9.3"
   }
 }

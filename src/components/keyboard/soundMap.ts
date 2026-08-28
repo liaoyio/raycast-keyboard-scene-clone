@@ -1,4 +1,12 @@
-export const KEY_SOUND_MAP = {
+export type SoundPhase = 0 | 1;
+export type SoundSlice = readonly [startMilliseconds: number, endMilliseconds: number];
+export type KeySoundSlices = readonly [press: SoundSlice, release: SoundSlice];
+
+/**
+ * /public/assets/key-sounds.ogg 内每个按键对应的毫秒区间。
+ * 索引 0 是按下音效，索引 1 是松开音效。
+ */
+export const KEY_SOUND_MAP: Readonly<Partial<Record<string, KeySoundSlices>>> = {
   Escape: [[0, 170], [170, 221]],
   F1: [[221, 395], [395, 432]],
   F2: [[432, 588], [588, 623]],
@@ -84,7 +92,7 @@ export const KEY_SOUND_MAP = {
   ArrowRight: [[18103, 18253], [18253, 18300]],
 };
 
-export const SOUND_KEY_ALIASES = {
+export const SOUND_KEY_ALIASES: Readonly<Partial<Record<string, string>>> = {
   MetaLeft: "AltLeft",
   MetaRight: "AltLeft",
   ControlRight: "ControlLeft",
