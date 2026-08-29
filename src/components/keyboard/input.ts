@@ -2,17 +2,30 @@
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
+import { useEventListener } from "usehooks-ts";
 
 import { useKeyAudio } from "./audio";
-import { SUPPORTED_KEY_CODE } from "./constants";
 
 type KeyHandler = (code: string) => void;
 type KeyboardPointerEvent = ThreeEvent<PointerEvent>;
 
 interface KeyboardInputOptions {
   enabled: boolean;
+  supportedKeys: ReadonlySet<string>;
   onPress?: KeyHandler;
   onRelease?: KeyHandler;
+}
+
+const MODIFIER_KEY_CODE = /^(?:Shift|Control|Alt|Meta)(?:Left|Right)$/;
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+
+  return (
+    target.matches(
+      "a[href], button, input, select, textarea, [role='button'], [role='link']",
+    ) || target.isContentEditable
+  );
 }
 
 /**
@@ -21,6 +34,7 @@ interface KeyboardInputOptions {
  */
 export function useKeyboardInput({
   enabled,
+  supportedKeys,
   onPress,
   onRelease,
 }: KeyboardInputOptions) {
@@ -29,17 +43,19 @@ export function useKeyboardInput({
   const pressedKeysRef = useRef(new Set<string>());
   const pointerKeyRef = useRef<string | null>(null);
   const pointerDownRef = useRef(false);
+  const documentRef = useRef<Document>(null!);
   const playSound = useKeyAudio();
 
   const press = useCallback(
     (code: string) => {
+      if (!enabled) return;
       if (pressedKeysRef.current.has(code)) return;
 
       pressedKeysRef.current.add(code);
       playSound(code, 0);
       onPress?.(code);
     },
-    [onPress, playSound],
+    [enabled, onPress, playSound],
   );
 
   const release = useCallback(
@@ -72,52 +88,54 @@ export function useKeyboardInput({
     pointerDownRef.current = false;
   }, [release]);
 
-  useEffect(() => {
-    if (!enabled) {
-      releaseAll();
-      return undefined;
+  const releaseKeysLostToMeta = useCallback(() => {
+    for (const code of Array.from(keyboardKeysRef.current)) {
+      if (MODIFIER_KEY_CODE.test(code)) continue;
+
+      keyboardKeysRef.current.delete(code);
+      if (!pointerKeysRef.current.has(code)) release(code);
     }
+  }, [release]);
 
-    const controller = new AbortController();
-    const listenerOptions: AddEventListenerOptions = {
-      signal: controller.signal,
-    };
+  useEffect(() => {
+    documentRef.current = document;
+  }, []);
 
-    window.addEventListener(
-      "keydown",
-      (event) => {
-        if (!SUPPORTED_KEY_CODE.test(event.code)) return;
+  useEventListener("keydown", (event) => {
+    if (!enabled || isInteractiveTarget(event.target)) return;
+    if (!supportedKeys.has(event.code)) return;
 
-        keyboardKeysRef.current.add(event.code);
-        press(event.code);
-      },
-      listenerOptions,
-    );
+    keyboardKeysRef.current.add(event.code);
+    press(event.code);
+  });
 
-    window.addEventListener(
-      "keyup",
-      (event) => {
-        if (!SUPPORTED_KEY_CODE.test(event.code)) return;
+  useEventListener("keyup", (event) => {
+    if (!enabled) return;
 
-        keyboardKeysRef.current.delete(event.code);
-        if (!pointerKeysRef.current.has(event.code)) release(event.code);
-      },
-      listenerOptions,
-    );
+    // macOS may omit non-modifier keyup events while Command is held.
+    // Releasing Command therefore also relinquishes every keyboard-owned
+    // non-modifier key, without disturbing a simultaneous pointer hold.
+    if (event.code.startsWith("Meta")) releaseKeysLostToMeta();
+    if (!supportedKeys.has(event.code)) return;
 
-    window.addEventListener("pointerup", releasePointerKeys, listenerOptions);
-    window.addEventListener("pointercancel", releasePointerKeys, listenerOptions);
-    window.addEventListener("blur", releaseAll, listenerOptions);
-    document.addEventListener("visibilitychange", releaseAll, listenerOptions);
+    keyboardKeysRef.current.delete(event.code);
+    if (!pointerKeysRef.current.has(event.code)) release(event.code);
+  });
 
-    return () => {
-      controller.abort();
-      releaseAll();
-    };
-  }, [enabled, press, release, releaseAll, releasePointerKeys]);
+  useEventListener("pointerup", releasePointerKeys);
+  useEventListener("pointercancel", releasePointerKeys);
+  useEventListener("blur", releaseAll);
+  useEventListener("visibilitychange", releaseAll, documentRef);
+
+  useEffect(() => {
+    if (!enabled) releaseAll();
+
+    return releaseAll;
+  }, [enabled, releaseAll]);
 
   const enterPointerKey = useCallback(
     (event: KeyboardPointerEvent) => {
+      if (!enabled) return;
       event.stopPropagation();
 
       const code = event.object.name;
@@ -133,11 +151,13 @@ export function useKeyboardInput({
       pointerKeysRef.current.add(code);
       press(code);
     },
-    [press, release],
+    [enabled, press, release],
   );
 
-  const pointerEvents = useMemo(
-    () => ({
+  const pointerEvents = useMemo(() => {
+    if (!enabled) return {};
+
+    return {
       onPointerDown: (event: KeyboardPointerEvent) => {
         if (event.button !== 0) return;
         pointerDownRef.current = true;
@@ -155,9 +175,8 @@ export function useKeyboardInput({
       },
       onPointerUp: releasePointerKeys,
       onPointerCancel: releasePointerKeys,
-    }),
-    [enterPointerKey, releasePointerKeys],
-  );
+    };
+  }, [enabled, enterPointerKey, releasePointerKeys]);
 
   return { pointerEvents, pressedKeysRef };
 }

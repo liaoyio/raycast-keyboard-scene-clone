@@ -1,17 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-
 import { KEY_SOUND_URL } from "./constants";
 import KEY_SOUND_MAP, {
   SOUND_KEY_ALIASES,
   type KeySoundSlices,
   type SoundPhase,
-} from "./soundMap";
+} from "./sound-map";
 
-type AudioContextWindow = Window & {
-  webkitAudioContext?: typeof AudioContext;
-};
+type AudioContextWindow = Window & { webkitAudioContext?: typeof AudioContext };
 
 export type PlayKeySound = (code: string, phase: SoundPhase) => void;
 
@@ -42,8 +39,7 @@ export function useKeyAudio(): PlayKeySound {
 
   useEffect(() => {
     const AudioContextConstructor =
-      window.AudioContext ??
-      (window as AudioContextWindow).webkitAudioContext;
+      window.AudioContext ?? (window as AudioContextWindow).webkitAudioContext;
 
     if (!AudioContextConstructor) return undefined;
 
@@ -70,7 +66,7 @@ export function useKeyAudio(): PlayKeySound {
         if (!disposed) bufferRef.current = buffer;
       })
       .catch((error: unknown) => {
-        if (!isAbortError(error)) bufferRef.current = null;
+        if (!disposed && !isAbortError(error)) bufferRef.current = null;
       });
 
     return () => {
@@ -78,6 +74,7 @@ export function useKeyAudio(): PlayKeySound {
       controller.abort();
 
       for (const source of sourcesRef.current) {
+        source.onended = null;
         try {
           source.stop();
         } catch {
@@ -113,24 +110,41 @@ export function useKeyAudio(): PlayKeySound {
 
     if (!slice) return;
 
-    if (context.state === "suspended") {
-      void context.resume().catch(() => undefined);
+    const [startMilliseconds, endMilliseconds] = slice;
+    const startPlayback = () => {
+      if (
+        context.state === "closed" ||
+        contextRef.current !== context ||
+        bufferRef.current !== buffer ||
+        gainRef.current !== gain
+      ) {
+        return;
+      }
+
+      const source = context.createBufferSource();
+
+      source.buffer = buffer;
+      source.connect(gain);
+      sourcesRef.current.add(source);
+      source.onended = () => {
+        sourcesRef.current.delete(source);
+        source.disconnect();
+      };
+      source.start(
+        context.currentTime,
+        startMilliseconds / 1000,
+        (endMilliseconds - startMilliseconds) / 1000,
+      );
+    };
+
+    if (context.state !== "running") {
+      void context
+        .resume()
+        .then(startPlayback)
+        .catch(() => undefined);
+      return;
     }
 
-    const [startMilliseconds, endMilliseconds] = slice;
-    const source = context.createBufferSource();
-
-    source.buffer = buffer;
-    source.connect(gain);
-    sourcesRef.current.add(source);
-    source.onended = () => {
-      sourcesRef.current.delete(source);
-      source.disconnect();
-    };
-    source.start(
-      context.currentTime,
-      startMilliseconds / 1000,
-      (endMilliseconds - startMilliseconds) / 1000,
-    );
+    startPlayback();
   }, []);
 }

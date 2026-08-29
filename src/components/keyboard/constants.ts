@@ -26,7 +26,3 @@ export const CAMERA_START: [number, number, number] = [0, 4.5, 0];
 export const CAMERA_TARGET_POSITION = new THREE.Vector3(0, 3.5, 1.5);
 export const CAMERA_LOOK_AT = new THREE.Vector3(0, 0, 0);
 export const LOCAL_PRESS_AXIS = new THREE.Vector3(0, -1, 0);
-
-// 源交互只响应字母、数字和方向键。
-export const SUPPORTED_KEY_CODE =
-  /^(Key[A-Z]|Digit[0-9]|Arrow(?:Up|Down|Left|Right))$/;

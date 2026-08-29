@@ -1,6 +1,6 @@
 # Raycast 键盘交互实现拆解
 
-> 本文基于提交 `3742c89` 的源码，面向希望学习 React、React Three Fiber、Web Audio 与 GLSL 协作方式的前端开发者。文中的行号用于定位当前版本，后续改动可能使行号发生偏移。
+> 本文基于 2026-08-29 的当前工作树，面向希望学习 React、React Three Fiber、Web Audio 与 GLSL 协作方式的前端开发者。文中的行号用于定位当前版本，后续改动可能使行号发生偏移。
 
 ## 先建立整体认识
 
@@ -24,19 +24,23 @@ flowchart LR
 
 整个实现可以分成五层。
 
-| 层级 | 主要文件 | 责任 |
-| --- | --- | --- |
-| 装载与降级 | `Hero.tsx`、`styles.css` | 判断桌面断点、动态加载 3D 场景、保留静态占位图 |
-| 场景与动画 | `Scene.tsx` | 创建 Canvas、模型 Mesh、相机运动和逐帧键帽动画 |
-| 输入 | `input.ts` | 统一实体键盘、点击与拖动输入，处理多输入源所有权 |
-| 声音 | `audio.ts`、`soundMap.ts` | 加载单个 OGG 音频精灵，按毫秒区间播放按下与松开声音 |
-| 光效 | `shaders.ts`、`constants.ts` | 计算扩散脉冲，混合基础纹理与 RGB 纹理 |
+| 层级       | 主要文件                     | 责任                                                             |
+| ---------- | ---------------------------- | ---------------------------------------------------------------- |
+| 装载与降级 | `hero.tsx`、`globals.css`    | 通过媒体查询与可视区状态动态加载 3D 场景，保留尺寸匹配的静态降级 |
+| 场景与动画 | `scene.tsx`                  | 创建 Canvas、模型 Mesh、相机运动和逐帧键帽动画                   |
+| 输入       | `input.ts`                   | 统一实体键盘、点击与拖动输入，处理多输入源所有权                 |
+| 声音       | `audio.ts`、`sound-map.ts`   | 加载单个 OGG 音频精灵，按毫秒区间播放按下与松开声音              |
+| 光效       | `shaders.ts`、`constants.ts` | 计算扩散脉冲，混合基础纹理与 RGB 纹理                            |
+
+项目自有 CSS 只有 `src/app/globals.css` 一个入口，其中只定义 Tailwind 导入、`@theme` token 与两组命名 `@keyframes`。组件的布局、间距、颜色、断点、交互状态与伪元素均使用 Tailwind utilities，全局样式表不承担组件选择器职责。需要按条件组合 class 时，统一使用 `src/utils/cn.ts` 中基于 `cnfast` 的 `cn`，避免分散的手写拼接并正确合并 Tailwind 冲突。
 
 ## 一次 `KeyA` 按下经历了什么
 
 ### 场景启动
 
-页面首次渲染时，`Hero` 先输出静态键盘图。浏览器完成水合后，`useSyncExternalStore` 读取 `(min-width: 1001px)`；只有桌面尺寸会渲染通过 `next/dynamic` 引入的 `Scene`。这一步把 Three.js 相关代码留在独立客户端分块中，移动端不会主动装载 3D 场景。
+页面首次渲染时，`Hero` 同时输出桌面端固定槽与移动端静态图分支，由 `hidden`、`block` 和 `min-[1001px]:*` 等 Tailwind utilities 在断点处选择。桌面端的 400px 场景槽从第一帧起尺寸固定，但在 Three.js 尚未就绪时保持隐藏；移动端显示尺寸匹配的 WebP 静态键盘。
+
+`Hero` 使用 `usehooks-ts` 的 `useMediaQuery` 读取 `(min-width: 1001px)` 和减少动态效果偏好，并通过 `defaultValue: false` 与 `initializeWithValue: false` 保持服务端/水合首帧可预测。只有桌面尺寸会渲染由 `next/dynamic` 引入的 `Scene`；`useIntersectionObserver` 则生成 `inView`，用于在场景远离可视区时停止输入与持续渲染。这样 SSR 不会先把大幅静态键盘绘制到桌面首屏，再突然缩成较小的 3D 模型。
 
 `Scene` 创建 R3F `Canvas` 后，`Suspense` 等待以下资源：
 
@@ -46,7 +50,7 @@ flowchart LR
 
 资源就绪后，`createMeshStates` 遍历模型的直接子节点。当前 GLB 有 85 个根 Mesh，其中 84 个非静态 Mesh 会被代码视为可交互对象，另一个名为 `static`。这 84 个对象约对应 83 个逻辑键，其中还包含一块疑似 Space 附属几何。每个对象都保存原始位置、旋转、缩放、按压轴、当前键程和独立材质；`static` 底座不接收指针事件。
 
-模型和纹理越过 `Suspense` 后，首次 `useFrame` 开始时，`KeyboardModel` 调用 `onReady`。这个信号代表渲染循环已经开始，不严格等同于像素已经提交到屏幕。`Hero` 随后将 `sceneReady` 设为 `true`，CSS 用 500ms 交叉淡化把静态键盘替换成 Canvas。资源仍在等待时，静态图会继续显示；资源请求或 WebGL 初始化若直接抛错，当前场景没有局部 Error Boundary，错误仍可能传播到路由级错误处理。
+模型和纹理越过 `Suspense` 后，首次 `useFrame` 开始时，`KeyboardModel` 调用 `onReady`。此时相机已在 `useLayoutEffect` 中预置到确定的起始姿态，`Hero` 再让整个场景层以 500ms 淡入，背景和 Canvas 不会分两次跳变。资源请求或 WebGL 初始化若抛错，局部 `SceneErrorBoundary` 会让同一固定槽位显示尺寸匹配的 WebP 降级图，而不是把异常传播成整页错误。
 
 ### 按下阶段
 
@@ -55,7 +59,7 @@ sequenceDiagram
   participant W as window
   participant I as input.ts
   participant A as audio.ts
-  participant S as Scene.tsx
+  participant S as scene.tsx
   participant G as GPU Shader
 
   W->>I: keydown，code = KeyA
@@ -82,6 +86,8 @@ sequenceDiagram
 2. `press` 检查总按压集合。第一次按下才会写入 `pressedKeysRef`，浏览器的按键自动重复不会反复播放声音或创建光效。
 3. `playSound(code, 0)` 播放按下声音，`onPress(code)` 将 A 键中心写入脉冲环形缓冲区。
 
+输入层会在这条链路之前检查事件目标。焦点位于带 `href` 的链接、`button`、`input`、`select`、`textarea`、contenteditable 元素或 button/link role 时，场景完全忽略该次 `keydown`。焦点位于非交互页面内容时，方向键与 Space 仍可触发键盘光效，但输入层不阻止浏览器默认行为，因此页面原生滚动会同时保留。
+
 ### 松开阶段
 
 `keyup` 先从 `keyboardKeysRef` 删除 `KeyA`。如果指针没有同时占用它，`release` 才会从总按压集合删除该键，并调用 `playSound(code, 1)` 播放松开声音。
@@ -92,11 +98,11 @@ sequenceDiagram
 
 `input.ts` 用三个 `Set<string>` 表达输入所有权。
 
-| 状态 | 含义 |
-| --- | --- |
-| `keyboardKeysRef` | 当前由实体键盘占用的键 |
-| `pointerKeysRef` | 当前由指针占用的键 |
-| `pressedKeysRef` | 任一输入源仍占用的总按压集合 |
+| 状态              | 含义                         |
+| ----------------- | ---------------------------- |
+| `keyboardKeysRef` | 当前由实体键盘占用的键       |
+| `pointerKeysRef`  | 当前由指针占用的键           |
+| `pressedKeysRef`  | 任一输入源仍占用的总按压集合 |
 
 它们之间的约束可以写成：
 
@@ -106,13 +112,13 @@ pressedKeys = keyboardKeys ∪ pointerKeys
 
 代码没有每次重新计算这个并集。`press` 与 `release` 增量维护 `pressedKeysRef`，其行为如下。
 
-| 操作顺序 | 总按压状态 | 是否重复触发声音与光效 |
-| --- | --- | --- |
-| 实体键第一次按下 | 进入按下 | 会 |
-| 浏览器重复发送同一个 `keydown` | 保持按下 | 不会 |
-| 实体键按住时，指针压住同一键 | 保持按下 | 不会 |
-| 实体键松开，指针仍压住 | 保持按下 | 不会播放松开声音 |
-| 最后一个输入源释放 | 进入松开 | 会播放松开声音 |
+| 操作顺序                       | 总按压状态 | 是否重复触发声音与光效 |
+| ------------------------------ | ---------- | ---------------------- |
+| 实体键第一次按下               | 进入按下   | 会                     |
+| 浏览器重复发送同一个 `keydown` | 保持按下   | 不会                   |
+| 实体键按住时，指针压住同一键   | 保持按下   | 不会                   |
+| 实体键松开，指针仍压住         | 保持按下   | 不会播放松开声音       |
+| 最后一个输入源释放             | 进入松开   | 会播放松开声音         |
 
 ### 指针拖过多个键
 
@@ -125,7 +131,7 @@ pressedKeys = keyboardKeys ∪ pointerKeys
 
 因此，鼠标按住并横向划过键盘时，会依次产生接近真实扫键的视觉和声音反馈。
 
-当前没有 `pointerout` 或空区域命中处理。指针从键帽移到键帽间隙、`static` 底座或 Canvas 空白处时，旧键会保持按下，直到进入另一个交互 Mesh，或者窗口收到 `pointerup` / `pointercancel`。
+当前没有 `pointerout` 或空区域命中处理。指针从键帽移到键帽间隙、`static` 底座或 Canvas 空白处时，旧键会保持按下，直到进入另一个交互 Mesh，或者窗口收到 `pointerup` / `pointercancel`。场景停用时 `pointerEvents` 会整体移除，并静默释放全部输入所有权。
 
 ### 为什么这里使用 ref 和 Set
 
@@ -143,7 +149,7 @@ pressedKeys = keyboardKeys ∪ pointerKeys
 - `enabled` 变为 `false`；
 - Hook 卸载。
 
-`window` 与 `document` 上的原生事件监听器统一绑定到一个 `AbortController`，卸载时调用 `abort()` 即可批量移除。窗口失焦、页面可见性变化、禁用 Hook 和卸载会静默释放；`pointerup` 与 `pointercancel` 按正常松开流程播放声音。Mesh 上的 R3F 指针事件属于 React props，不受这个控制器管理。
+`window` 与 `document` 上的通用事件通过 `usehooks-ts` 的 `useEventListener` 声明，监听器在目标或回调变化以及 Hook 卸载时由库统一清理。窗口失焦、页面可见性变化、禁用 Hook 和卸载会静默释放；`pointerup` 与 `pointercancel` 按正常松开流程播放声音。Mesh 上的 R3F 指针事件仍属于 React props，由领域 Hook 组装而不使用窗口监听器。
 
 ## 键帽下压如何模拟机械键程
 
@@ -228,7 +234,7 @@ uPulseCenters[10]
 uPulseProgress[10]
 ```
 
-按键触发时，`triggerPulse` 把该键原始位置的 XZ 坐标写入当前槽位，将进度重置为 `0`，然后把游标移动到下一个槽位。第 11 次触发会覆盖最旧槽位，因此 GPU 循环长度始终固定。
+按键触发时，`triggerPulse` 通过 Mesh 对象的 `getWorldPosition` 把当前世界 XZ 坐标写入槽位，将进度重置为 `0`，然后把游标移动到下一个槽位。第 11 次触发会覆盖最旧槽位，因此 GPU 循环长度始终固定。
 
 每帧按以下速度推进进度：
 
@@ -272,10 +278,13 @@ color = mix(baseColor, rgbColor, pulse × 2) × uDim
 
 ## 声音为何使用音频精灵
 
-`key-sounds.ogg` 把所有按下与松开声音串成一个文件，`soundMap.ts` 记录 83 个键对应的毫秒区间。以 A 键为例：
+`key-sounds.ogg` 把所有按下与松开声音串成一个文件，`sound-map.ts` 记录 83 个键对应的毫秒区间。以 A 键为例：
 
 ```ts
-KeyA: [[10161, 10335], [10335, 10384]]
+KeyA: [
+  [10161, 10335],
+  [10335, 10384],
+];
 ```
 
 索引 `0` 是按下片段，索引 `1` 是松开片段。播放流程如下。
@@ -304,15 +313,14 @@ KeyA: [[10161, 10335], [10335, 10384]]
 
 下表描述首次直接打开页面时的正常路径。
 
-| 视口 | JavaScript 行为 | CSS 行为 | 用户看到的内容 |
-| --- | --- | --- | --- |
-| `≤ 1000px` | 不渲染 `Scene` | `.scene` 隐藏 | 静态键盘图 |
-| `≥ 1001px` 且场景未就绪 | 动态加载 `Scene` | 静态图保持可见 | 静态键盘图 |
-| `≥ 1001px` 且场景就绪 | Canvas 运行 | 500ms 交叉淡化 | 可交互 3D 键盘 |
+| 视口                    | JavaScript 行为                         | Tailwind utilities 行为                          | 用户看到的内容                 |
+| ----------------------- | --------------------------------------- | ------------------------------------------------ | ------------------------------ |
+| `≤ 1000px`              | 不渲染 `Scene`，并复位桌面就绪/失败状态 | 桌面槽 `hidden`，移动静态分支 `block`            | WebP 静态键盘                  |
+| `≥ 1001px` 且场景未就绪 | 动态加载 `Scene`                        | 桌面槽改为 `block`，固定 400px 且保持不可见/透明 | 稳定的页面几何，没有大图换小图 |
+| `≥ 1001px` 且场景就绪   | Canvas 运行                             | 条件 class 让整个场景层在 500ms 内淡入           | 可交互 3D 键盘                 |
+| `≥ 1001px` 且场景失败   | Error Boundary 接管                     | 同一 400px 槽位显示降级图，移动分支保持隐藏      | 尺寸稳定的静态键盘             |
 
-`useSyncExternalStore` 提供服务端快照 `false`，服务端和水合首帧都会先采用静态场景，随后浏览器再订阅媒体查询变化。这能避免服务端猜测视口宽度。
-
-当前实现还有一个跨断点缺陷：桌面 3D 就绪后，`sceneReady` 不会在缩到移动端时复位；`.scene-slot-ready .static-scene` 的选择器权重又高于移动端的 `.static-scene`，因此静态图会继续保持 `visibility: hidden`，同时 3D 层已被卸载，键盘区域会变空。初始直接打开移动端不受这个问题影响。
+`useMediaQuery` 在这里使用 `false` 作为默认值且不在水合首帧主动读取视口，避免服务端猜测视口宽度；Tailwind 的桌面/移动显示 utilities 同时保证 SSR 阶段不会把移动端大图显示在桌面首屏。媒体查询跨过断点时，`Hero` 会卸载或重新挂载 3D 场景并复位 `sceneReady` / `sceneFailed`，因此桌面缩到移动端后静态键盘会立即恢复。
 
 正常首次装载路径有三个直接收益：
 
@@ -324,20 +332,27 @@ KeyA: [[10161, 10335], [10335, 10384]]
 
 ## 相机和场景入口动画
 
-Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视野角为 20°。模型首帧就绪后，`CameraRig` 用阻尼系数 4.5 把相机平滑推向目标位置，并在每帧重新看向原点。
+Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视野角为 20°。相机在布局阶段先固定到起点，模型首帧就绪后，`CameraRig` 用阻尼系数 4.5 把相机平滑推向目标位置，并在活动帧中重新看向原点。
 
-与键帽动画相同，相机也截断帧间隔，避免恢复标签页时突然跳变。当前 CSS 只处理了部分 `prefers-reduced-motion`：文字和场景淡入会停用，静态层自身的 500ms 淡出仍然存在，WebGL 相机也会继续移动。
+与键帽动画相同，相机也截断帧间隔，避免恢复标签页时突然跳变。`motion-reduce:*` utilities 会关闭引用全局 keyframes 的入场/淡入，同时 `prefersReducedMotion` 让 WebGL 相机直接落到目标位置。场景离开视口或视频弹窗打开后，输入与相机停止，首帧完成后的 Canvas 从 `always` 切换为 `demand` 帧循环，避免不可见状态持续占用 GPU。
 
 ## React 架构中的关键取舍
 
 ### 低频状态交给 React
 
-`Hero` 只维护两个业务状态：
+`Hero` 维护三个会改变组件树或可访问语义的业务状态：
 
-- `sceneReady` 控制静态图与 Canvas 的交接；
+- `sceneReady` 记录 Canvas 首帧就绪并让桌面场景槽可见；
+- `sceneFailed` 让局部 Error Boundary 降级图使用同一可见槽位；
 - `videoOpen` 控制视频弹窗挂载。
 
-桌面媒体查询由 `useSyncExternalStore` 管理。它们都会影响组件树或可访问语义，使用 React 状态合理。
+`useMediaQuery` 提供桌面断点和减少动态效果偏好，`useIntersectionObserver` 提供场景可见性；这些通用浏览器能力不需要在项目内重复实现。
+
+### 通用 Hook 与领域 Hook 的边界
+
+通用响应式、可视区、事件监听、稳定回调与滚动锁定分别使用 `usehooks-ts` 的 `useMediaQuery`、`useIntersectionObserver`、`useEventListener`、`useEventCallback` 和 `useScrollLock`。场景是否活动不需要另一层薄封装：`Hero` 直接组合 `inView && !videoOpen`，`Scene` 再与首帧就绪状态组合出输入和渲染开关。
+
+项目内保留的两个 Hook 都拥有完整领域责任：`useKeyboardInput` 管理实体键盘/指针所有权、防重、卡键清理和 R3F 指针事件；`useKeyAudio` 管理 `AudioContext`、音频精灵解码、并发 Source 与卸载释放。它们不是对单个 React API 或浏览器事件的重命名封装。
 
 ### 高频状态留在渲染循环
 
@@ -357,43 +372,41 @@ Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视�
 
 ## 性能与稳定性策略
 
-| 策略 | 收益 | 代价或风险 |
-| --- | --- | --- |
-| 桌面端动态加载 `Scene` | 移动端不主动加载 3D 场景 | 断点两侧需要维护不同体验 |
-| 静态图等待首次 `useFrame` 就绪信号 | 正常加载阶段没有空白区域 | 多维护一份静态视觉资产；该信号早于像素提交 |
-| `dpr={[1, 2]}` | 高分屏保持清晰，同时限制像素比 | 超高密度屏不会按物理 DPR 全量渲染 |
-| 固定 10 个脉冲 | Shader 循环成本有上界 | 极快连按会覆盖最早光效 |
-| `MAX_FRAME_DELTA` | 后台恢复时动画稳定 | 隐藏期间的动画时间相当于暂停 |
-| 音频精灵 | 单次请求、共享解码 Buffer | 时间切片表需要与源音频严格同步 |
-| 85 个 Mesh 与约 85 个材质 | 独立变暗逻辑直接 | 每帧绘制调用较多，每个可见片元还固定计算 10 个脉冲 |
-| 默认 `frameloop="always"` | 动画无需手动请求下一帧 | 即使用户没有输入，桌面 Canvas 仍持续渲染 |
-| ref 驱动实时状态 | 避免高频 React 重渲染 | 调试与单元测试更偏命令式 |
+| 策略                                     | 收益                                                           | 代价或风险                                         |
+| ---------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| 桌面端动态加载 `Scene`                   | 移动端不主动加载 3D 场景                                       | 断点两侧需要维护不同体验                           |
+| 桌面固定槽位等待首次 `useFrame` 就绪信号 | SSR、资源加载和 WebGL 初始化期间页面几何不变，不发生大图换小图 | 首次进入时保留一段有意的空白场景槽                 |
+| `dpr={[1, 1.75]}`                        | 高分屏保持清晰，同时进一步限制填充成本                         | 超高密度屏不会按物理 DPR 全量渲染                  |
+| 固定 10 个脉冲                           | Shader 循环成本有上界                                          | 极快连按会覆盖最早光效                             |
+| `MAX_FRAME_DELTA`                        | 后台恢复时动画稳定                                             | 隐藏期间的动画时间相当于暂停                       |
+| 音频精灵                                 | 单次请求、共享解码 Buffer                                      | 时间切片表需要与源音频严格同步                     |
+| 85 个 Mesh 与约 85 个材质                | 独立变暗逻辑直接                                               | 每帧绘制调用较多，每个可见片元还固定计算 10 个脉冲 |
+| 首帧前 `always`，停用后 `demand`         | 装载和活动交互持续刷新，离屏或弹窗状态停止空转                 | 暂停期间未完成的脉冲会停在当前进度                 |
+| ref 驱动实时状态                         | 避免高频 React 重渲染                                          | 调试与单元测试更偏命令式                           |
 
 ## 当前边界与风险
 
 以下判断来自当前源码，按影响程度给出置信度。等级表示结论可靠性，不表示发生概率。
 
-| 边界 | 影响 | 置信度 |
-| --- | --- | --- |
-| 桌面就绪后缩到移动端不会复位 `sceneReady`，移动端覆盖样式权重不足 | 3D 已卸载，静态图仍隐藏，键盘区域会变空 | 高 |
-| 实体键盘只接受字母、数字和方向键；指针可以触发模型中的其他键 | `soundMap` 虽有 83 键，实体 Esc、空格、修饰键和功能键不会驱动画面 | 高 |
-| GLB 与音频表只有 64 个名称精确相交，20 个 Mesh 使用 `keys.*` 泛化名称 | 这些对象经指针触发时会走随机字母音回退，命名缺失不易被发现 | 高 |
-| `createMeshStates` 只遍历 `scene.children` | 当前 85 个 Mesh 都在根层，可正常工作；GLB 若增加嵌套 Group，内部 Mesh 不会被注册 | 高 |
-| 窗口键盘监听在视频弹窗打开后仍保持启用 | 焦点位于父文档时，字母键仍会驱动遮罩后的键盘；焦点进入跨域视频 iframe 后，事件不会传回父页面 | 高 |
-| `enabled=false` 只关闭窗口监听，Mesh 指针处理器没有读取该值 | 单独传 `active=false` 仍无法完整暂停指针交互 | 高 |
-| 方向键监听没有调用 `preventDefault` | 触发键盘动画时页面也可能滚动 | 高 |
-| 键盘监听不检查 `event.target` 是否可编辑 | 当前页面没有文本框；以后新增 input、textarea 或 contenteditable 时，正常输入也会驱动场景 | 高 |
-| 输入层只有一个 `pointerKeyRef`，没有按 `pointerId` 分配状态 | 多点触控时，一个触点可能覆盖另一个触点的所有权 | 高 |
-| 指针移到键帽间隙或 Canvas 空白处时没有释放处理 | 旧键会保持按下，直到命中另一个键或全局松手 | 高 |
-| 音频尚未解码完成时直接忽略播放 | 冷启动后的第一次按键可能没有声音 | 高 |
-| 音频获取、解码与 `AudioContext.resume()` 错误被静默处理 | 页面视觉仍可运行，但现有日志无法定位无声原因 | 高 |
-| `GainNode` 固定为 3，多个 Source 可并发 | 快速多键输入存在响度过高或削波风险，实际程度取决于源文件峰值 | 中 |
-| 减少动态效果偏好只关闭文字、背景和 `.scene` 动画 | 静态层 500ms 淡出与 WebGL 相机运动仍然存在 | 高 |
-| 静态图片隐藏后，Canvas 没有等价的可访问名称，Mesh 也不可通过 DOM 聚焦 | 辅助技术会失去整体描述，也没有逐键焦点语义 | 高 |
-| 脉冲中心使用 Mesh 原始 XZ，Shader 使用世界 XZ | 当前根 Group 为单位变换时对齐；以后整体旋转或位移会造成中心错位 | 高 |
-| 同一键的多个光效用固定槽位覆盖 | 极高频输入只保留最近 10 个脉冲 | 高 |
-| 场景没有局部 Error Boundary | 动态模块、资源或 WebGL 抛错时，静态图未必能独立保住整个 Hero | 中 |
-| Canvas 使用默认持续帧循环 | 无交互时仍有稳定的 GPU 与片元着色成本 | 高 |
+| 边界                                                                  | 影响                                                                                                      | 置信度 |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------ |
+| 实体键盘支持范围从 GLB 的非静态 Mesh 名称生成                         | 与 `KeyboardEvent.code` 同名的 Esc、空格、修饰键和功能键可响应；`keys.*` 泛化 Mesh 仍无法由实体键直接命中 | 高     |
+| GLB 与音频表只有 64 个名称精确相交，20 个 Mesh 使用 `keys.*` 泛化名称 | 这些对象经指针触发时会走随机字母音回退，命名缺失不易被发现                                                | 高     |
+| `createMeshStates` 只遍历 `scene.children`                            | 当前 85 个 Mesh 都在根层，可正常工作；GLB 若增加嵌套 Group，内部 Mesh 不会被注册                          | 高     |
+| 视频弹窗或离屏状态会把 `active` 置为 false                            | 输入、相机和持续帧循环都会暂停；音频资源仍保留到 Scene 卸载                                               | 高     |
+| 输入层不阻止按键的浏览器默认行为                                      | 焦点位于非交互内容时，方向键与 Space 可同时驱动键盘光效和页面原生滚动                                     | 高     |
+| 键盘监听忽略链接、按钮、表单控件、contenteditable 与 button/link role | 焦点位于交互目标时完全保留原生语义，不会新增场景按压、声音或脉冲                                          | 高     |
+| 输入层只有一个 `pointerKeyRef`，没有按 `pointerId` 分配状态           | 多点触控时，一个触点可能覆盖另一个触点的所有权                                                            | 高     |
+| 指针移到键帽间隙或 Canvas 空白处时没有释放处理                        | 旧键会保持按下，直到命中另一个键或全局松手                                                                | 高     |
+| 音频尚未解码完成时直接忽略播放                                        | 冷启动后的第一次按键可能没有声音                                                                          | 高     |
+| 音频获取、解码与 `AudioContext.resume()` 错误被静默处理               | 页面视觉仍可运行，但现有日志无法定位无声原因                                                              | 高     |
+| `GainNode` 固定为 3，多个 Source 可并发                               | 快速多键输入存在响度过高或削波风险，实际程度取决于源文件峰值                                              | 中     |
+| 减少动态效果偏好关闭 CSS 动画并直接安置 WebGL 相机                    | 按键的交互反馈仍保留，不会把功能完全移除                                                                  | 高     |
+| Canvas 有整体 `role="img"` 与可访问名称，Mesh 仍不可通过 DOM 聚焦     | 辅助技术可理解整体内容，但无法逐键操作 3D 键帽                                                            | 高     |
+| 脉冲中心使用 Mesh 原点的世界 XZ，Shader 使用片元的世界 XZ             | 整体变换能保持两者在同一坐标系；资产若把 Mesh 原点放在远离键帽视觉中心的位置，光斑仍会偏移                | 高     |
+| 同一键的多个光效用固定槽位覆盖                                        | 极高频输入只保留最近 10 个脉冲                                                                            | 高     |
+| 局部 Error Boundary 使用静态 WebP 兜底                                | 资源或 WebGL 失败时 Hero 保持完整；错误态不再具备交互                                                     | 高     |
+| 场景处于视口内且视频关闭时维持持续帧循环                              | 可见但无输入时仍有稳定的 GPU 与片元着色成本                                                               | 高     |
 
 ## 如何扩展而不破坏现有协议
 
@@ -402,8 +415,8 @@ Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视�
 需要同时核对三个位置：
 
 1. GLB 中存在与 `KeyboardEvent.code` 同名的 Mesh；
-2. `SUPPORTED_KEY_CODE` 接受该键码；
-3. `soundMap.ts` 提供音频切片，或明确接受回退声音。
+2. 该 Mesh 不是名为 `static` 的底座；输入层会从其名称自动生成 `supportedKeys`；
+3. `sound-map.ts` 提供音频切片，或明确接受回退声音。
 
 只改其中一处会产生「有声音无动画」「点击可用但实体键不可用」等不完整状态。
 
@@ -413,7 +426,7 @@ Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视�
 
 - `KEY_PRESS_DEPTH` 控制最大键程；
 - `PRESSED_KEY_DIMMING` 控制压下后的亮度差；
-- `Scene.tsx` 中 `damp(..., 55, ...)` 的 55 控制回弹速度。
+- `scene.tsx` 中 `damp(..., 55, ...)` 的 55 控制回弹速度。
 
 键程和阻尼应一起观察。键程增加而阻尼不变会让运动幅度变大，视觉上也会显得更慢。
 
@@ -429,7 +442,7 @@ Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视�
 
 ### 暂停弹窗背后的键盘
 
-`Scene` 已经暴露 `active` 参数，输入 Hook 也接收 `enabled`，但当前语义只会移除窗口键盘监听并冻结相机。Mesh 上的指针处理器仍可调用 `press`，脉冲与键帽的逐帧更新也会继续；`useKeyAudio` 仍会创建 AudioContext 和请求音频。若要在视频打开时完整暂停，需要让 `pointerEvents` 同样读取 `enabled`，并明确脉冲是暂停、清空还是自然结束；完成这些语义后，再由 `Hero` 传入 `active={!videoOpen}`。
+`Hero` 以 `inView && !videoOpen` 计算 `active`。变为 `false` 时，输入 Hook 会移除窗口监听、清空当前所有权并返回空的 Mesh `pointerEvents`；相机停止，Canvas 在首帧完成后切换到 `frameloop="demand"`。当前选择是暂停而不是清空脉冲，所以重新激活时未完成的光效会从原进度继续。`useKeyAudio` 仍保留已经解码的 Buffer，直到桌面 Scene 卸载。
 
 ### 支持嵌套模型层级
 
@@ -443,15 +456,18 @@ Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视�
 - 实体键盘和鼠标同时按同一个键，分别交换松开顺序；
 - 按住鼠标拖过多个键，再在 Canvas 外松手；
 - 按住多个键后切换标签页，返回后确认没有卡键；
-- 检查方向键是否同时造成页面滚动，并明确产品期望。
+- 聚焦非交互页面内容，确认方向键与 Space 既会触发键盘光效，也保留页面原生滚动；
+- 分别聚焦链接、按钮、input、textarea 和 contenteditable，确认原生交互不会驱动场景；
+- 在 macOS 按住 Command 组合键后松开，确认缺失的非修饰键 `keyup` 不会留下卡键。
 
 ### 装载与响应式
 
-- 在慢速网络下确认静态图持续显示到首个 3D 有效帧；
+- 在慢速网络下确认桌面 400px 槽位尺寸不变，并在首个 3D 有效帧后整体淡入；
 - 分别验证 1000px 与 1001px；
-- 从桌面缩到移动端，再放回桌面；当前版本应能复现静态图被错误隐藏的问题，修复后将其加入回归测试；
-- 模拟 GLB 或纹理请求失败，记录当前异常传播结果；加入局部 Error Boundary 后，再断言静态图可以保留；
-- 打开减少动态效果偏好，检查 CSS 与相机运动。
+- 从桌面缩到移动端，再放回桌面，确认 WebP 与 3D 各自恢复且没有空槽；
+- 模拟 GLB 或纹理请求失败，确认局部 Error Boundary 在固定槽位保留 WebP；
+- 打开减少动态效果偏好，确认 Tailwind 动画 utilities 停用且相机直接落到目标位置；
+- 把场景滚出视口、打开视频弹窗，确认输入停用并且帧循环不再持续运行。
 
 ### 图形与声音
 
@@ -463,13 +479,13 @@ Canvas 初始相机位于 `[0, 4.5, 0]`，目标位置为 `[0, 3.5, 1.5]`，视�
 
 ## 推荐阅读顺序
 
-1. [`Hero.tsx`](../src/components/keyboard/Hero.tsx) 第 9–37、82–118 行，理解场景何时加载和交接；
-2. [`input.ts`](../src/components/keyboard/input.ts) 第 27–73、75–162 行，理解输入所有权和清理；
-3. [`Scene.tsx`](../src/components/keyboard/Scene.tsx) 第 112–185、205–264 行，理解模型状态和逐帧动画；
+1. [`hero.tsx`](../src/components/keyboard/hero.tsx) 第 33–105、191–240 行，理解入场样式合并、媒体查询、可视区、场景加载和静态降级交接；
+2. [`input.ts`](../src/components/keyboard/input.ts) 第 21–101、103–137、139–187 行，理解交互目标过滤、输入所有权、`useEventListener` 清理和指针状态；
+3. [`scene.tsx`](../src/components/keyboard/scene.tsx) 第 123–208、238–307、310–358 行，理解模型状态、逐帧动画和渲染开关；
 4. [`shaders.ts`](../src/components/keyboard/shaders.ts) 第 34–90、103–133 行，理解脉冲数学与材质共享；
-5. [`audio.ts`](../src/components/keyboard/audio.ts) 第 43–95、98–135 行，理解音频精灵生命周期；
-6. [`constants.ts`](../src/components/keyboard/constants.ts) 和 [`soundMap.ts`](../src/components/keyboard/soundMap.ts)，最后核对参数与数据表；
-7. [`styles.css`](../src/components/keyboard/styles.css) 第 287–358、448–565 行，理解静态降级、断点和减少动态效果策略。
+5. [`audio.ts`](../src/components/keyboard/audio.ts) 第 37–97、99–150 行，理解音频精灵生命周期；
+6. [`constants.ts`](../src/components/keyboard/constants.ts) 和 [`sound-map.ts`](../src/components/keyboard/sound-map.ts)，最后核对参数与数据表；
+7. [`globals.css`](../src/app/globals.css) 第 1–35 行，理解 Tailwind 入口、主题 token 和全局 keyframes；再回到 `hero.tsx`、`nav.tsx` 与 `button.tsx` 的 `className` 查看组件级 Tailwind utilities，并查看 [`cn.ts`](../src/utils/cn.ts) 理解条件类合并。
 
 ## 可以带走的三个设计经验
 

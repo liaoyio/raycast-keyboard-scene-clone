@@ -4,25 +4,31 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
-  type CSSProperties,
+  useState,
 } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { useGLTF, useTexture } from "@react-three/drei";
+import { useDialKit } from "dialkit";
 import * as THREE from "three";
+import { useEventCallback } from "usehooks-ts";
 
 import {
   BASE_TEXTURE_URL,
+  CAMERA_LOOK_AT,
   CAMERA_START,
+  CAMERA_TARGET_POSITION,
   LOCAL_PRESS_AXIS,
   MAX_FRAME_DELTA,
   MAX_PULSES,
   MODEL_URL,
   RGB_TEXTURE_URL,
 } from "./constants";
+import { DebugPanel } from "./debug";
 import { useKeyboardInput } from "./input";
-import { useSceneControls, type SceneControls } from "./debug";
+import { SCENE_CONFIG, type SceneControls } from "./scene-config";
 import {
   configureKeyboardTextures,
   createKeyboardMaterial,
@@ -33,10 +39,10 @@ import {
 
 export interface SceneProps {
   active?: boolean;
+  inView?: boolean;
+  prefersReducedMotion?: boolean;
   onReady?: () => void;
 }
-
-type MutableValueRef<T> = { current: T };
 
 interface KeyboardMeshState {
   name: string;
@@ -52,73 +58,66 @@ interface KeyboardMeshState {
 }
 
 interface CameraRigProps {
-  readyRef: MutableValueRef<boolean>;
-  activeRef: MutableValueRef<boolean>;
-  controls: SceneControls["camera"];
+  active: boolean;
+  prefersReducedMotion: boolean;
 }
 
 interface KeyboardModelProps {
   active: boolean;
-  activeRef: MutableValueRef<boolean>;
-  onReadyRef: MutableValueRef<(() => void) | undefined>;
-  readyRef: MutableValueRef<boolean>;
+  onFirstFrame: () => void;
   controls: SceneControls;
 }
-
-const CANVAS_STYLE: CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  width: "100%",
-  height: "100%",
-  zIndex: 2,
-  touchAction: "none",
-};
 
 const CAMERA_LOOK_AT_VECTOR = new THREE.Vector3();
 const PULSE_WORLD_POSITION = new THREE.Vector3();
 
-function isMesh(child: THREE.Object3D): child is THREE.Mesh<THREE.BufferGeometry> {
+function isMesh(
+  child: THREE.Object3D,
+): child is THREE.Mesh<THREE.BufferGeometry> {
   return "isMesh" in child && child.isMesh === true;
 }
 
-function CameraRig({ readyRef, activeRef, controls }: CameraRigProps) {
+function CameraRig({ active, prefersReducedMotion }: CameraRigProps) {
+  const camera = useThree((state) => state.camera);
+  const restPosition = useMemo(() => CAMERA_TARGET_POSITION.clone(), []);
+  const lookAt = useMemo(() => CAMERA_LOOK_AT.clone(), []);
+
+  useLayoutEffect(() => {
+    camera.position.set(...CAMERA_START);
+    camera.lookAt(lookAt);
+    camera.updateMatrixWorld();
+  }, [camera, lookAt]);
+
+  useLayoutEffect(() => {
+    if (!active || !prefersReducedMotion) return;
+    camera.position.copy(restPosition);
+    camera.lookAt(lookAt);
+    camera.updateMatrixWorld();
+  }, [active, camera, lookAt, prefersReducedMotion, restPosition]);
+
   useFrame((state, frameDelta) => {
-    if (!readyRef.current || !activeRef.current) return;
+    if (!active || prefersReducedMotion) return;
 
     const delta = Math.min(frameDelta, MAX_FRAME_DELTA);
     state.camera.position.x = THREE.MathUtils.damp(
       state.camera.position.x,
-      controls.targetX,
-      controls.damping,
+      restPosition.x,
+      4.5,
       delta,
     );
     state.camera.position.y = THREE.MathUtils.damp(
       state.camera.position.y,
-      controls.targetY,
-      controls.damping,
+      restPosition.y,
+      4.5,
       delta,
     );
     state.camera.position.z = THREE.MathUtils.damp(
       state.camera.position.z,
-      controls.targetZ,
-      controls.damping,
+      restPosition.z,
+      4.5,
       delta,
     );
-
-    if (state.camera instanceof THREE.PerspectiveCamera) {
-      if (state.camera.fov !== controls.fov) {
-        state.camera.fov = controls.fov;
-        state.camera.updateProjectionMatrix();
-      }
-    }
-
-    state.camera.lookAt(
-      CAMERA_LOOK_AT_VECTOR.set(
-        controls.lookAtX,
-        controls.lookAtY,
-        controls.lookAtZ,
-      ),
-    );
+    state.camera.lookAt(CAMERA_LOOK_AT_VECTOR.copy(lookAt));
   });
 
   return null;
@@ -155,19 +154,14 @@ function createMeshStates(
   return meshes;
 }
 
-function KeyboardModel({
-  active,
-  activeRef,
-  onReadyRef,
-  readyRef,
-  controls,
-}: KeyboardModelProps) {
+function KeyboardModel({ active, onFirstFrame, controls }: KeyboardModelProps) {
   const { scene } = useGLTF(MODEL_URL);
   const [baseTexture, rgbTexture] = useTexture(
     [BASE_TEXTURE_URL, RGB_TEXTURE_URL],
     configureKeyboardTextures,
   );
   const pulseCursorRef = useRef(0);
+  const hasRenderedFrameRef = useRef(false);
 
   const sharedUniforms = useMemo(
     () => createKeyboardSharedUniforms(baseTexture, rgbTexture),
@@ -183,6 +177,15 @@ function KeyboardModel({
     () => new Map(meshes.map((mesh) => [mesh.name, mesh])),
     [meshes],
   );
+  const supportedKeys = useMemo(() => {
+    const keys = new Set<string>();
+
+    for (const mesh of meshes) {
+      if (!mesh.isStatic) keys.add(mesh.name);
+    }
+
+    return keys;
+  }, [meshes]);
 
   const triggerPulse = useCallback(
     (code: string) => {
@@ -204,6 +207,7 @@ function KeyboardModel({
 
   const { pointerEvents, pressedKeysRef } = useKeyboardInput({
     enabled: active,
+    supportedKeys,
     onPress: triggerPulse,
   });
 
@@ -236,10 +240,9 @@ function KeyboardModel({
   );
 
   useFrame((_, frameDelta) => {
-    if (!readyRef.current) {
-      readyRef.current = true;
-      activeRef.current = active;
-      onReadyRef.current?.();
+    if (!hasRenderedFrameRef.current) {
+      hasRenderedFrameRef.current = true;
+      onFirstFrame();
     }
 
     const delta = Math.min(frameDelta, MAX_FRAME_DELTA);
@@ -277,10 +280,7 @@ function KeyboardModel({
 
       if (!mesh.isStatic) {
         const pressDepth = Math.max(controls.keyPressDepth, 0.0001);
-        const pressedAmount = Math.min(
-          1,
-          mesh.depth / pressDepth,
-        );
+        const pressedAmount = Math.min(1, mesh.depth / pressDepth);
         mesh.material.uniforms.uDim.value =
           1 - pressedAmount * controls.pressedKeyDimming;
       }
@@ -288,19 +288,7 @@ function KeyboardModel({
   });
 
   return (
-    <group
-      position={[
-        controls.model.positionX,
-        controls.model.positionY,
-        controls.model.positionZ,
-      ]}
-      rotation={[
-        THREE.MathUtils.degToRad(controls.model.rotationX),
-        THREE.MathUtils.degToRad(controls.model.rotationY),
-        THREE.MathUtils.degToRad(controls.model.rotationZ),
-      ]}
-      scale={controls.model.scale}
-    >
+    <group>
       {meshes.map((mesh) => (
         <mesh
           key={mesh.name}
@@ -322,44 +310,52 @@ function KeyboardModel({
 
 export default function Scene({
   active = true,
+  inView = true,
+  prefersReducedMotion = false,
   onReady,
 }: SceneProps) {
-  const controls = useSceneControls();
-  const readyRef = useRef(false);
-  const activeRef = useRef(active);
-  const onReadyRef = useRef(onReady);
+  const controls = useDialKit("Settings", SCENE_CONFIG, {
+    id: "raycast-keyboard-scene",
+  });
+  const [renderReady, setRenderReady] = useState(false);
 
-  useEffect(() => {
-    activeRef.current = active;
-  }, [active]);
+  const handleFirstFrame = useEventCallback(() => {
+    setRenderReady(true);
+    onReady?.();
+  });
 
-  useEffect(() => {
-    onReadyRef.current = onReady;
-  }, [onReady]);
+  const sceneActive = active && renderReady;
+  const frameloop = !renderReady || (inView && active) ? "always" : "demand";
 
   return (
-    <Canvas
-      flat
-      camera={{ position: CAMERA_START, fov: controls.camera.fov }}
-      dpr={[1, 2]}
-      resize={{ offsetSize: true }}
-      style={CANVAS_STYLE}
-    >
-      <CameraRig
-        readyRef={readyRef}
-        activeRef={activeRef}
-        controls={controls.camera}
-      />
-      <Suspense fallback={null}>
-        <KeyboardModel
-          active={active}
-          activeRef={activeRef}
-          onReadyRef={onReadyRef}
-          readyRef={readyRef}
-          controls={controls}
-        />
-      </Suspense>
-    </Canvas>
+    <>
+      <div className="absolute inset-0 z-2 size-full touch-none">
+        <Canvas
+          flat
+          aria-label="Interactive 3D rendering of the Raycast mechanical keyboard"
+          camera={{ position: CAMERA_START, fov: 20 }}
+          className="size-full"
+          dpr={[1, 1.75]}
+          frameloop={frameloop}
+          gl={{ antialias: true, powerPreference: "high-performance" }}
+          resize={{ offsetSize: true }}
+          role="img"
+        >
+          <CameraRig
+            active={sceneActive}
+            prefersReducedMotion={prefersReducedMotion}
+          />
+          <Suspense fallback={null}>
+            <KeyboardModel
+              active={sceneActive}
+              onFirstFrame={handleFirstFrame}
+              controls={controls}
+            />
+          </Suspense>
+        </Canvas>
+      </div>
+      <DebugPanel />
+    </>
   );
 }
 
