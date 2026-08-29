@@ -10,7 +10,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 ## Durable design direction
 
-- Use `/Users/liaoyi/Desktop/raycast-keyboard-landing-main` as the interaction and visual-polish reference for the keyboard landing prototype.
+- Use the retained QA reference captures as the interaction and visual-polish source of truth for the keyboard landing prototype.
 - On desktop, never swap a full-viewport static keyboard image for a differently sized 3D projection. Keep the scene footprint stable and reveal it only from a verified first-frame-ready state (or use a size-matched fallback).
 - Match the reference's restrained dark `Watch video` button treatment and complete responsive navigation behavior, including a functional animated mobile menu.
 - Load repository-bundled fonts through `next/font/local`; do not hand-write global `@font-face` rules or depend on `next/font/google` during builds.
@@ -20,3 +20,10 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 - Use the shared `cn()` helper for conditional or merged Tailwind class names. Do not build dynamic `className` values with template-literal ternaries.
 - Encapsulate repeated component anatomy and styling in small composable components, following shadcn-style headless composition. Do not hoist long Tailwind strings into standalone `*_CLASSES` constants, and inline single-use IDs or media-query strings.
 - Prefer Tailwind `data-*`, `aria-*`, and group/peer variants for visual state. Keep JavaScript responsible for state and behavior instead of repeating visibility or transform ternaries across child class names.
+
+## Durable documentation direction
+
+- Edit user-facing Chinese documentation with the `liaoyi-zh` skill. Keep the prose direct and natural, distinguish verified facts from project decisions, and remove generic AI-style summaries.
+- Keep `README.md` focused on project identity, origin, scope, setup, commands, contribution checks, and licensing boundaries. Do not claim an open-source license until a repository `LICENSE` is explicitly chosen.
+- Maintain `docs/keyboard-interaction.md` as a source-backed technical blog that can be used during development. Prefer stable file and symbol references over line numbers, and include runnable setup, implementation reasoning, tuning recipes, troubleshooting, known limits, and verification steps.
+- When discussing the Raycast implementation, separate facts stated by Thomas Cullen's public article from behavior verified in this repository. In particular, label the original TSL implementation and this project's GLSL implementation correctly.
