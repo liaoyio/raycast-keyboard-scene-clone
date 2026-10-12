@@ -1,9 +1,42 @@
 @import "tailwindcss";
 
 @theme inline {
+  --color-nav-toggle: var(--nav-toggle);
+  --color-nav-button: var(--nav-button);
+  --color-nav-control: var(--nav-control);
+  --color-nav-background: var(--nav-background);
+  --color-nav-foreground: var(--nav-foreground);
+  --color-nav-muted: var(--nav-muted);
+  --color-nav-preview: var(--nav-preview);
+  --color-nav-border: var(--nav-border);
+  --color-nav-hover: var(--nav-hover);
+  --color-nav-accent: #fc4c01;
   --color-page: #07080a;
-  --font-sans:
-    var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root {
+  --nav-toggle: #fff;
+  --nav-button: #fff;
+  --nav-control: #f4f4f4;
+  --nav-background: #fff;
+  --nav-foreground: #454545;
+  --nav-muted: #999;
+  --nav-preview: #ececec;
+  --nav-border: rgb(0 0 0 / 10%);
+  --nav-hover: rgb(0 0 0 / 5%);
+}
+
+:root[data-theme="dark"] {
+  --nav-toggle: #222;
+  --nav-button: #222;
+  --nav-control: #303030;
+  --nav-background: #080808;
+  --nav-foreground: #ddd;
+  --nav-muted: #999;
+  --nav-preview: #111;
+  --nav-border: rgb(255 255 255 / 10%);
+  --nav-hover: rgb(255 255 255 / 10%);
 }
 
 @keyframes hero-enter {
@@ -30,4 +63,15 @@
     opacity: 1;
     filter: blur(0);
   }
+}
+
+/* Dialkit 2 的折叠图标脱离布局，需恢复占位以保证原生入口可点击。 */
+.dialkit-panel-inner[data-collapsed="true"] .dialkit-panel-icon {
+  position: static;
+}
+
+/* 默认停靠在右上操作栏左侧；拖动后由 Dialkit 自身管理位置。 */
+.dialkit-root .dialkit-panel[data-position="top-right"] {
+  top: 26px;
+  right: 118px;
 }

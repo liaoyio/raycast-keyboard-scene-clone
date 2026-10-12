@@ -1,6 +1,8 @@
 # Raycast Keyboard Scene
 
-一个用 Next.js、React Three Fiber 和 Tailwind CSS 重建 Raycast Keyboard Hero 的学习项目。它聚焦首屏导航、3D 键盘、实体键盘映射、机械键音、RGB 扩散光效，以及桌面与移动端之间的降级策略。
+一个用 Next.js、React Three Fiber 和 Tailwind CSS 重建 Raycast Keyboard Hero 的学习项目。当前站点通过左侧导航展示 Raycast、Mist 84 雾透版本和 NuPhy Air75 渲染工作台，保留各版本的键盘交互与灯光效果。右上提供全屏预览和浅色／暗黑切换。
+
+站点布局参考 [Rare UI](https://www.rareui.com/components/codeblock)（[源码](https://github.com/swamimalode07/rare-ui)），导航与预览容器在本项目中独立实现。
 
 [在线体验](https://raycast-keyboard-scene-clone.oooyi.chatgpt.site/)
 
@@ -21,13 +23,15 @@
 - 单个 OGG 音频精灵提供 83 组按下、松开声音切片；
 - 最多 10 个并发 RGB 脉冲在 GPU 中计算；
 - 响应式导航、移动菜单、视频弹窗和键盘舞台；
-- 1000px 及以下使用静态 WebP，不挂载 Three.js 场景；
+- Raycast 和雾透页在 1000px 及以下使用静态图，不挂载 Three.js 场景；
 - 固定桌面场景尺寸、首帧就绪信号和局部错误降级；
 - 离开视口或打开视频时暂停输入与持续帧循环；
 - `prefers-reduced-motion`、键盘焦点和原生滚动行为适配；
-- Konami Code 调出 Dialkit 参数面板。
+- Raycast 默认显示 Dialkit 原生入口；Mist 和 Air75 设置抽屉提供素材替换和 inline 调参。
 
-本项目只复刻产品页的导航和 Hero，不包含完整官网、购买流程、键盘固件、配置软件或真实硬件通信。
+Mist 页面默认使用 2026-10-12 提供的 GLB 与 Base／RGB 两态 UV 示例，支持切换 `0923 UV`、单文件替换和批量导入。灯效与 Raycast 对齐，使用扩散波纹并保留键程，支持背景颜色与两色渐变调节；原「雾透白灯」五层缓存方案已移除。Blender 工程仅在本地保留为历史制作源，由 Git 忽略，不随网站发布。
+
+本项目围绕键盘 Hero 交互、版本预览和素材工作台展开，不包含完整官网、购买流程、键盘固件或真实硬件通信。
 
 ## 体验交互
 
@@ -36,7 +40,7 @@
 1. 点击任意键帽，观察位移、声音和 RGB 脉冲是否同时触发；
 2. 按住鼠标拖过多枚键帽，检查旧键释放和新键接管；
 3. 使用实体键盘输入，模型会按 `KeyboardEvent.code` 查找同名 Mesh；
-4. 输入 `↑ ↑ ↓ ↓ ← → ← → B A`，打开 Dialkit 实时调参；
+4. 点击右上角 Dialkit 原生入口，展开实时调参面板；
 5. 把窗口缩到 1000px，再放大到 1001px，观察静态图与 3D 场景切换。
 
 ## 技术栈
@@ -44,16 +48,19 @@
 | 模块       | 选择                                            |
 | ---------- | ----------------------------------------------- |
 | 应用框架   | Next.js 16 App Router、React 19、TypeScript 5.9 |
-| 样式       | Tailwind CSS 4、`cnfast`                        |
+| 样式       | Tailwind CSS 4、`cn`、`next-themes`                |
 | 3D         | Three.js、React Three Fiber、Drei               |
 | 声音       | Web Audio API、OGG 音频精灵                     |
 | 调参       | Dialkit                                         |
 | 通用 Hooks | `usehooks-ts`                                   |
+| 检查与测试 | ESLint、TypeScript、Vitest                       |
 | 部署       | Next.js 静态导出、OpenAI Sites 托管适配         |
 
 ## 本地运行
 
-需要 Node.js 20.9.0 或更高版本以及 npm。这个下限来自当前安装的 Next.js 16.3.3；依赖版本由 `package-lock.json` 锁定。
+建议使用 Node.js 24 LTS（24.15.0 及以上）和 npm。Next.js 的最低要求是 20.9.0，但当前 Vitest 5 和 Lint 依赖要求更高；其中 `eslint-plugin-jsdoc` 声明支持 `^22.22.2 || >=24.15.0`。依赖版本由 `package-lock.json` 锁定。
+
+本轮类型检查、Lint、构建和测试在 Node.js 24.13.0 上通过，但该版本低于部分依赖声明的范围，安装时仍会出现 engine 警告。新环境请使用上述推荐版本。
 
 ```bash
 npm ci
@@ -68,6 +75,9 @@ npm run dev
 | ------------------------- | -------------------------------------------------------- |
 | `npm run dev`             | 启动 Next.js 开发服务器                                  |
 | `npm run typecheck`       | 运行 TypeScript 类型检查，不生成文件                     |
+| `npm run lint`            | 检查源码、脚本和测试的规则与格式                         |
+| `npm run lint:fix`        | 自动修复可安全调整的 Lint 与格式问题                     |
+| `npm test`               | 使用 Vitest 运行全仓回归测试；Sites 用例需要先完成 build |
 | `npm run build`           | 静态导出站点，并整理 Sites 托管产物                      |
 | `npm run test:sites`      | 检查 Sites Worker 的静态资源与回退契约；需要先完成 build |
 | `npx react-doctor@latest` | 扫描 React 项目的结构、性能和可维护性问题                |
@@ -85,46 +95,48 @@ dist/
 
 ```text
 src/
-├── app/
-│   ├── globals.css              # Tailwind 入口、主题变量和命名关键帧
-│   ├── layout.tsx               # 元数据、本地字体和根布局
-│   └── page.tsx                 # 首页 Server Component
-├── components/keyboard/
-│   ├── nav.tsx                  # 响应式导航和移动菜单
-│   ├── hero.tsx                 # Hero、断点、装载和降级交接
-│   ├── scene.tsx                # R3F 场景、模型和逐帧动画
-│   ├── input.ts                 # 实体键盘与指针输入状态机
-│   ├── audio.ts                 # Web Audio 资源生命周期
-│   ├── shaders.ts               # RGB 扩散 GLSL Shader
-│   ├── scene-config.ts          # Dialkit 可调参数
-│   └── sound-map.ts             # 音频精灵切片表
-├── components/icons/            # 页面使用的本地图标组件
-└── utils/cn.ts                  # 基于 cnfast 的条件类合并
-public/
-├── assets/                       # GLB、纹理、音频和静态渲染
-└── fonts/                        # next/font/local 使用的 Inter 字体
+├── app/                         # 页面入口；首页跳转到 /raycast
+│   ├── raycast/
+│   ├── nuphy-mist84/
+│   └── nuphy-air75/
+├── components/
+│   ├── raycast/                 # Raycast Hero、场景和配置
+│   ├── mist/                    # 雾透 Hero、场景和键位映射
+│   ├── air75/                   # 工作台、资源加载和调参
+│   ├── shared/                  # 输入、音频、渲染和视频弹窗
+│   ├── site/                    # 版本导航与预览布局
+│   └── icons/
+└── utils/
+public/assets/
+├── raycast/                     # Raycast 页面素材
+├── mist/                        # 雾透页面素材
+├── air75/                       # 工作台模型、黑白贴图和渲染图
+└── common/                      # 背景、声音和 Draco 解码器
 ```
 
-模型、纹理、声音和静态图位于 `public/assets/`。完整的输入状态机、按压计算、Shader 数学、加载策略和排错方法见[《Raycast 键盘交互实现拆解》](docs/keyboard-interaction.md)，本机视觉回归记录见[《设计验收记录》](design-qa.md)。
+模型、纹理、声音和静态图位于 `public/assets/`。共用的背景、按键声音和 Draco 解码器集中在 `public/assets/common/`；各页面的专用素材分别放在对应目录；Mist 的 `ux-0923/` 保留用户指定的原目录与文件名。贴图以 `texture-` 开头，渲染图以 `render-` 开头，演示素材以 `demo-` 开头。完整的输入状态机、按压计算、Shader 数学、加载策略和排错方法见[《Raycast 键盘交互实现拆解》](docs/keyboard-interaction.md)。Mist 的旧光学制作记录见[《雾透键盘动画适配》](docs/mist-keyboard-adaptation.md)；旧 Air75 V3 的素材测量保存在[历史分析](docs/air75-asset-and-animation-analysis.md)中。
 
 ## 代码约定
 
-- 所有 `.ts`、`.tsx` 文件使用 kebab-case 命名；Next.js 约定文件继续使用 `page.tsx`、`layout.tsx` 这类框架名称。
-- 组件样式使用 Tailwind utilities。`globals.css` 只保留 Tailwind 入口、主题变量和无法用 utility 表达的命名关键帧。
-- 动态或较长的条件类使用 `src/utils/cn.ts`，不要手写模板字符串拼接，也不要把大段 class 声明成常量。
+- 自有源码、脚本和测试使用 kebab-case；Next.js 约定名称和第三方分发文件保持原名。
+- 组件样式使用 Tailwind utilities。`globals.css` 保留主题变量、命名关键帧及已注明原因的 Dialkit 兼容规则。
+- 条件类使用共享 `cn()`。超过 150 字符的 `className` 按用途分段，避免长模板字符串和大段样式常量。
+- 类型超过四个字段时移出函数签名。紧密相关的小组件放在同一模块，资源加载等独立职责再拆文件；函数注释用简短中文说明职责或限制。
 - 媒体查询、事件监听、可视区观察等通用行为优先使用 `usehooks-ts`。项目内 Hook 只保留输入状态机、Web Audio 生命周期这类领域逻辑。
-- 高频逐帧数据放在 ref、Three 对象和 Shader uniform 中；React state 只承载需要影响组件树的低频状态。
+- 输入和资源生命周期集中管理。高频逐帧数据放在运行时对象和 Shader uniform 中；React state 只保存影响组件树的状态，派生值直接计算。
 
 ## 提交改动
 
 提交前至少运行：
 
 ```bash
+npm run lint
 npm run typecheck
 npm run build
-npm run test:sites
-npx react-doctor@latest
+npm test
 ```
+
+Sites 定向检查可单独运行 `npm run test:sites`。模型、光晕、主题或输入有改动时，还需在浏览器核对对应页面；自动检查不能证明画面已经一致。
 
 ## 素材与许可证
 

@@ -1,29 +1,78 @@
-# Prototype Instructions
+# 项目协作约定
 
-Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
+- 应用代码放在 `src/`。自行启动本地服务器并打开当前环境可用的浏览器预览，不把能执行的验证交给用户。
+- 有选定的设计图时，以其布局、组件结构、密度、间距、颜色和层级为准。视觉来源不明确或已不符合当前目标时，先读取 Product Design 插件的上下文技能，再做大幅视觉改动。
+- 用户给出长期有效的项目偏好或设计决定时，更新本文件。新要求覆盖已被取代的旧约定，避免保留互相冲突的规则。
+- 保留 `.openai/hosting.json`、`worker/index.js`、`scripts/prepare-sites-build.mjs` 和 Sites 契约测试的职责。Sites 交付前运行 `npm run build`、`npm run test:sites`，确认生成 `dist/client/index.html`、`dist/server/index.js` 和 `dist/.openai/hosting.json`。
 
-Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.
+## 代码维护
 
-When implementing from a selected generated mock, treat that image as the source of truth for layout, component anatomy, density, spacing, color, typography, visible content, and hierarchy.
+- 按完整职责组织文件。紧密耦合的小组件留在同一模块；素材生命周期、渲染运算等独立职责才提取，不为减少单文件行数创建薄包装。
+- Effect 用于外部系统同步和资源清理。派生值直接计算，用户操作中的状态变化直接处理。领域状态集中管理，避免重复就绪标记、仅转发 setter 的 Hook，以及只用于同步 React state 的 effect。
+- 媒体查询、事件订阅等通用行为直接使用已有 hooks 库；自定义 Hook 只封装完整的领域状态机或资源生命周期。逐帧数据保留在运行时对象或 uniform 中，不驱动 React 重渲染。
+- 参数类型超过四个字段时，提到函数前。类型贴近所属功能，只有跨模块共享时才考虑独立文件。
+- 项目自有源码、脚本和测试使用 kebab-case 文件名。框架约定名称和第三方分发文件保持原样。
+- 组件样式使用 Tailwind utilities。条件或合并类使用共享 `cn()`；超过 150 字符的 `className` 按布局、视觉、交互等分段传入 `cn()`，不要整条长字符串只套一层函数，也不要提成 `*_CLASSES` 常量。
+- 优先使用 Tailwind 的 `data-*`、`aria-*` 和 group/peer 变体表达视觉状态，避免给每个子节点重复写 JavaScript 条件。
+- 独立函数补简短中文说明，解释职责或必要约束。长函数按实际职责拆分，简单分支提前返回；逐帧渲染、几何处理保留必要循环，不为缩短代码增加分配和遍历。
+- 保留模型校验、失败回退、资源释放、焦点管理和既有校准参数。重构不顺带改变键盘尺寸、材质、灯光或导航行为。
+- 字体通过 `next/font/local` 加载仓库文件，不手写全局 `@font-face`，构建不依赖 `next/font/google`。
+- `globals.css` 仅保留主题变量、命名关键帧和已说明原因的第三方兼容修复。现有例外是 Dialkit 折叠图标的点击区域与入口初始停靠位置。
+- 使用 Vitest 维护回归测试，测试文件命名为 `*.test.ts`，共用测试工具也使用 TypeScript。按改动运行相关测试，交付前完成类型检查、Lint、生产构建与全仓测试；Sites 测试需要先生成 `dist/`。
 
-Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts/prepare-sites-build.mjs`, and `tests/sites-worker.test.mjs` intact so the same local prototype can be handed to Sites. Before a Sites handoff, run `npm run build` and `npm run test:sites`; the build must leave `dist/client/index.html`, `dist/server/index.js`, and `dist/.openai/hosting.json`.
+## 资源与页面
 
-## Durable design direction
+- 保留 `/raycast`、`/nuphy-mist84`、`/nuphy-air75`；根页面跳转 `/raycast`。已删除的 `/air-75-v3`、`/air-75-v3-write`、`/air-75-v3-v2` 及其专用资源不再恢复。
+- 静态资源按页面放在 `public/assets/{raycast,mist,air75}`；共享背景、按键声音和 Draco 解码器放在 `public/assets/common`。assets 下通常最多“页面目录／文件”两层；用户指定的 `mist/ux-0923/` 保留原目录与文件名，作为可直接切换的 UV 素材套装。
+- 贴图使用 `texture-` 前缀，渲染图用 `render-`，演示素材用 `demo-`；第三方 Draco 文件名保持原样。清理前核对运行时、动态路径和测试引用，不按文件名判断是否重复。
+- 静态资源目录只保留当前网页会加载的文件，用户要求保留的 Blender 源工程是例外。完成制作后的离线脚本与中间文件及时移入回收站，不能因旧代码或历史文档引用而继续保留。
+- 组件对应放在 `src/components/{raycast,mist,air75,shared}`。雾透和工作台共用 `shared/ansi-renderer.tsx`，保持各自的模型适配与键位校验。
+- 素材与画面不符时，先报告已核实的差异及仍未确认的原因。未经用户明确要求临时近似，不用 gamma、曝光或按几何特判改色掩盖素材问题；需要时请求修正素材。
 
-- Use the retained QA reference captures as the interaction and visual-polish source of truth for the keyboard landing prototype.
-- On desktop, never swap a full-viewport static keyboard image for a differently sized 3D projection. Keep the scene footprint stable and reveal it only from a verified first-frame-ready state (or use a size-matched fallback).
-- Match the reference's restrained dark `Watch video` button treatment and complete responsive navigation behavior, including a functional animated mobile menu.
-- Load repository-bundled fonts through `next/font/local`; do not hand-write global `@font-face` rules or depend on `next/font/google` during builds.
-- Use Tailwind CSS utilities for project-owned layout and component styling. Keep authored CSS limited to theme variables/tokens and named `@keyframes`; do not add CSS Modules or ad-hoc selector styles without documenting a concrete exception.
-- Do not introduce thin custom hooks for generic browser or React behavior. Prefer the project's established hooks library, and reserve custom hooks for cohesive domain state machines or resource lifecycles.
-- Name project-owned TypeScript and TSX modules in kebab-case; retain framework-mandated filenames such as `next.config.ts`, `next-env.d.ts`, `layout.tsx`, and `page.tsx`.
-- Use the shared `cn()` helper for conditional or merged Tailwind class names. Do not build dynamic `className` values with template-literal ternaries.
-- Encapsulate repeated component anatomy and styling in small composable components, following shadcn-style headless composition. Do not hoist long Tailwind strings into standalone `*_CLASSES` constants, and inline single-use IDs or media-query strings.
-- Prefer Tailwind `data-*`, `aria-*`, and group/peer variants for visual state. Keep JavaScript responsible for state and behavior instead of repeating visibility or transform ternaries across child class names.
+## 场景与调参
 
-## Durable documentation direction
+- 保留现有 QA 截图所记录的交互与视觉。桌面端使用稳定的舞台占位，实际首帧绘制后才显示场景；静态回退必须匹配舞台尺寸，避免全屏大图突然换成较小的 3D 投影。
+- Air75 相机在入场后固定；鼠标移动不倾斜或移动键盘。保留键程和脉冲交互，入场与空闲时不自动亮灯。移动端和失败回退保持未亮灯外观。
+- 保留各页面已经校准的相机和投影尺寸。比较尺寸时同时记录 Canvas 与模型实际投影；不能仅因 Canvas 相同就认定键盘一样大，也不能缩放键盘来弥补光晕错位。
+- Raycast 的 `Watch video` 按钮保持克制的深色处理。视频弹窗、移动端导航和键盘操作都应可用，尊重减少动画偏好。
+- Raycast 默认显示 Dialkit 原生折叠入口；Air75 和 Mist 使用右上设置按钮及抽屉内的 Dialkit inline 面板，抽屉默认关闭。灯光、按键和脉冲参数直接显示；相机、模型变换和高级组默认折叠，调参仅影响当前会话。
+- 调参标题、分组和标签使用中文。区分贴图混合增益与物理灯强度、相机终点与注视点、指数收敛速率与弹簧阻尼；单位使用秒、度或模型／场景单位，不虚构毫米单位。
 
-- Edit user-facing Chinese documentation with the `liaoyi-zh` skill. Keep the prose direct and natural, distinguish verified facts from project decisions, and remove generic AI-style summaries.
-- Keep `README.md` focused on project identity, origin, scope, setup, commands, contribution checks, and licensing boundaries. Do not claim an open-source license until a repository `LICENSE` is explicitly chosen.
-- Maintain `docs/keyboard-interaction.md` as a source-backed technical blog that can be used during development. Prefer stable file and symbol references over line numbers, and include runnable setup, implementation reasoning, tuning recipes, troubleshooting, known limits, and verification steps.
-- When discussing the Raycast implementation, separate facts stated by Thomas Cullen's public article from behavior verified in this repository. In particular, label the original TSL implementation and this project's GLSL implementation correctly.
+## Air75 工作台
+
+- `/nuphy-air75` 使用 0904 V2 FULL 模型和对应黑白 UV 素材，复用 ANSI 渲染器。八项默认参数按显示顺序为 `0、0.22、1.67、0.4、0.71、3.2、0.85、1.4`。
+- 保留左侧版本导航；移除页面内的 NuPhy RENDER LAB header。设置按钮独立放在右上操作栏左侧，与 Dialkit 原生入口位置一致。
+- 设置抽屉默认关闭，支持关闭按钮和 Escape。面板悬浮覆盖右侧，不占布局宽度；开关不能改变舞台、键盘位置或相机。抽屉内使用 Dialkit 2 inline 面板。
+- 支持本地 GLB、Base、RGB 替换，独立左右背景开关，以及可调的可选底部阴影。页面持有本地 URL，场景持有其加载的 GPU 资源，清理责任明确。
+- 切换白色配色时应用白色舞台主题，默认关闭两侧颗粒背景。页面背景颜色使用 Dialkit 原生颜色控件。关闭设置或重播入场后，焦点回到键盘舞台，实体按键继续触发波纹。
+- 两侧背景使用 Raycast 同一素材和底部渐隐。光晕按 Three.js 相机下的键盘投影边界定位、缩放，保持背景与键盘的相对宽度比例；保留左右独立开关，不按页面宽度猜测，也不限制 Canvas 来适配光晕。
+
+## 雾透键盘
+
+- `/nuphy-mist84` 默认使用用户于 2026-10-12 提供的 1012 GLB 与 Base／RGB 两态 UV 示例，保留 `0923 UV` 切换。默认文件为 `public/assets/mist/keyboard-1012.glb`、`texture-base-1012.png`、`texture-light-1012.png`。移除「雾透白灯」入口、五层 KTX2 光路与专用运行时代码，不恢复该默认方案。
+- 1012 模型按已核实的六行分组映射 83 个键帽，10 个其他网格作为静态结构；转换尺度与前后轴后对齐既有舞台。0923 合并模型按真实连通片分键，保留全部三角、UV 和法线。独立命名模型须满足 Mist 83 键布局；未知布局报错，不猜测键码。
+- 两态 UV 使用 `sampler2D`，键帽复用 Raycast 的世界坐标扩散波纹，混合 Base 与 RGB 外观；静态结构只显示 Base。贴图混合比例限制在 0–1，增益只加速混合，不外推颜色。保留键程，移除旧单键渐亮／渐灭包络与局部椭圆涟漪。PNG 不包含松开／压下两套光路，不声称逐帧实时重算折射或完全复现实物；Base 中的烘焙受光与印字不称为实测 albedo 或恢复的油墨材质。
+- 雾透的灯效配置名称、顺序、时长、缓动指数与混合增益沿用 Raycast；按键压暗比例默认 0，按下不额外变暗。波纹距离按约十倍键距换算，默认羽化宽度 0.8、最大半径 1.5；键程保留 0.16，避免 1012 帽内上层与轴体新增穿插，保留雾透相机与模型变换校准。旧 `IMG_1600.MOV` 半秒单键包络已被替换，不再作为网页灯效时序依据。减少动画模式不显示扩散，灯效直接跟随按下与松开。
+- 舞台默认背景为浅雾白 `#eef0f1`，可通过 Dialkit 原生颜色选择器即时修改；支持可选的两色线性渐变，页面背景颜色作为起点，终点颜色与方向可调，默认关闭，调参仅影响当前会话。全局主题只调整导航、工具栏和 Dialkit。保留 400px 舞台与既有相机投影、小标题与灰色文案，不叠加 CSS 光晕。背景颜色、渐变与设置抽屉开关不改变舞台占位或相机。
+- 保留本地可编辑源工程 `public/assets/mist/mist-moonbow-bright-white.blend`，作为历史制作源，不由网页加载。`.blend` 文件由 Git 忽略，不再跟踪，也不进入 Sites 发布产物；Sites 源码同步使用独立部署检出目录，避免推送包含大文件的本地旧历史。旧光学 GLB 和 KTX2 移入回收站；不保留未使用的 MP4、海报、离线 EXR、遮罩 BIN、制作脚本或中间归档。历史文档须注明旧方案已被替换，仓库不再提供原自动重烘与导出流程。
+- `public/assets/mist/ux-0923/` 保留用户指定的 `wt.glb`、`BASE_0923_v1.png`、`RGB_0923_v1.png` 原目录与文件名。键位核验数据位于 `tests/fixtures/mist-key-layout.json`，不随网页发布。默认回退图须匹配当前 1012 素材外观。
+- Mist 工作台支持本地 GLB、Base UV、灯光 UV 单独替换及批量导入，未替换的文件取当前选中套装的内置素材。单个文件不超过 50 MB，刷新恢复默认。页面拥有本地 URL，场景拥有解码资源；校验失败保留当前预览，替换成功后释放旧资源。
+- 默认移动端保留静态回退，主动使用 UV 工作台时允许挂载交互预览。设置抽屉默认关闭，关闭后焦点回到键盘舞台；实体按键、拖动输入、失焦清理与首帧显示继续可用。
+
+## 导航与主题
+
+- 保留 Rare UI 风格的左侧分组导航，列出现有版本。桌面侧栏宽 368px，可折叠；移动端使用抽屉。每次加载默认关闭导航，通过左上按钮展开。沿用当前预览容器的边界和留白，重构不重新引入已移除的容器间距或圆角。
+- 右上仅保留全屏预览和明暗主题切换，不提供 Install、Get code、登录或命令面板。全屏隐藏侧栏及其占位，Escape 返回；页面滚动限制由具体页面决定，不全局禁用。
+- 导航和全屏由 `site-shell.tsx` 内的一个 reducer 管理。相关局部组件留在同一文件，直接传递必要参数，不给薄组件单独拆文件或增加 Context 转发。
+- `next-themes` 的 ThemeProvider 位于全局 `src/app/layout.tsx`，由 html 的 `data-theme` 驱动界面，默认浅色并保存用户选择；主题按钮使用 `useTheme`，不另存主题状态。导航颜色集中在 `globals.css` 变量。
+- `/raycast` 背景固定为原站颜色 `#07080a`，保留深色页面的文字层级、背景和舞台渐隐。全局主题只调整导航、工具栏和 Dialkit，不修改键盘材质或灯光。
+- 导航开关和工具按钮参考 Skiper UI：白色圆角方形底、实心分栏图标，分栏随展开状态移动；右上为浅色胶囊和灰色圆形按钮。使用主题变量，保留按压反馈并尊重减少动画设置。
+- 右上工具栏尺寸为：按钮 32px、图标 16px、间距 4px、内边距 6px、边框 1px；总高 46px、圆角 16px，两个操作时宽 82px。
+- Dialkit 原生入口默认位于操作栏左侧，间隔 12px、垂直居中，拖动继续由 Dialkit 管理。入口与面板使用 Dialkit 原生主题，通过 `resolvedTheme` 跟随全局明暗切换。
+
+## 文档
+
+- 中文文档交付前使用 `liaoyi-zh` 润色。表达直接，区分核实的事实、项目决定和未验证事项。
+- `README.md` 说明项目身份、来源、范围、启动方式、命令、贡献检查和许可边界。仓库未选择 `LICENSE` 前，不宣称原创源码已开源授权。
+- `docs/keyboard-interaction.md` 作为开发技术文档维护，提供稳定的文件／符号引用、实现原理、调参、排错、限制与验证步骤。
+- 区分 Thomas Cullen 公开文章中的原作 TSL 方案与本仓库验证的 GLSL 实现。历史资产分析保留测量日期、文件哈希和旧版本语境，不用新路径暗示旧测量仍代表当前页面。

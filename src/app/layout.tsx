@@ -1,11 +1,14 @@
-import type { Metadata } from "next";
-import localFont from "next/font/local";
-import type { ReactNode } from "react";
+import type { Metadata } from "next"
+import type { ReactNode } from "react"
+import { ThemeProvider } from "next-themes"
+import localFont from "next/font/local"
 
-import { cn } from "@/utils/cn";
+import { SiteShell } from "@/components/site/site-shell"
 
-import "./globals.css";
-import "dialkit/styles.css";
+import { cn } from "@/utils/cn"
+
+import "./globals.css"
+import "dialkit/styles.css"
 
 const inter = localFont({
   src: "../../public/fonts/inter-latin.woff2",
@@ -13,7 +16,7 @@ const inter = localFont({
   style: "normal",
   weight: "100 900",
   variable: "--font-inter",
-});
+})
 
 export const metadata: Metadata = {
   title: "The Raycast Keyboard",
@@ -22,19 +25,23 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.png",
   },
-};
+}
 
-type Props = { children: ReactNode };
+interface Props { children: ReactNode }
 
+/** 加载公共字体、全局主题和版本导航布局。 */
 export default function RootLayout({ children }: Props) {
   return (
     <html
       lang="en"
-      className={cn(inter.variable, "min-w-80 bg-page antialiased")}
+      suppressHydrationWarning
+      className={cn(inter.variable, "group/site min-w-80 overscroll-none bg-nav-background antialiased")}
     >
-      <body className="min-h-screen min-w-80 overflow-x-hidden bg-page font-sans text-white">
-        {children}
+      <body className="min-h-screen min-w-80 overflow-x-hidden overscroll-none bg-nav-background font-sans text-white">
+        <ThemeProvider attribute="data-theme" defaultTheme="light" enableSystem={false}>
+          <SiteShell>{children}</SiteShell>
+        </ThemeProvider>
       </body>
     </html>
-  );
+  )
 }

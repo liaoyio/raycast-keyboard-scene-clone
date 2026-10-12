@@ -1,6 +1,6 @@
 # Raycast 键盘交互实现拆解：从资源协议到实时反馈管线
 
-这篇文章基于 2026-08-29 的项目源码，面向正在开发 React 3D 交互的前端工程师。它既解释实现原理，也提供改代码时可以直接使用的索引、调参入口、排错路径和验证清单。
+这篇文章记录 Raycast 键盘交互的实现原理、调参入口和排错方法。初稿基于 2026-08-29 的源码，输入、音频、首帧显示和文件索引已在 2026-10-09 按当前仓库更新。本文主要讨论 `/raycast`；雾透和 Air75 工作台各自保留独立素材与校准参数。
 
 文章讨论的是“如何深入学习并重建一个 3D 产品 Hero”，不涉及机器学习。涉及原作的结论来自公开产品页和制作文章；涉及参数、边界与风险的结论以当前仓库为准。文件链接不写行号，避免格式化或重构后失效。
 
@@ -8,16 +8,17 @@
 
 | 你要处理的问题             | 先看文件                                                                                                                             | 本文位置               |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
-| 实体键盘、鼠标拖键、卡键   | [`input.ts`](../src/components/keyboard/input.ts)                                                                                    | 输入所有权状态机       |
-| 键帽下沉方向、键程和回弹   | [`scene.tsx`](../src/components/keyboard/scene.tsx)、[`scene-config.ts`](../src/components/keyboard/scene-config.ts)                 | 键帽如何模拟机械键程   |
-| RGB 范围、速度、边缘和亮度 | [`shaders.ts`](../src/components/keyboard/shaders.ts)、[`scene-config.ts`](../src/components/keyboard/scene-config.ts)               | RGB 扩散如何计算       |
-| 某个键没有声音             | [`audio.ts`](../src/components/keyboard/audio.ts)、[`sound-map.ts`](../src/components/keyboard/sound-map.ts)                         | 音频精灵如何播放       |
-| 桌面首屏闪跳、Canvas 空白  | [`hero.tsx`](../src/components/keyboard/hero.tsx)、[`scene-error-boundary.tsx`](../src/components/keyboard/scene-error-boundary.tsx) | Next.js 装载与降级     |
-| 移动端不应下载 3D 场景     | [`hero.tsx`](../src/components/keyboard/hero.tsx)                                                                                    | 1000/1001px 分支       |
-| 调试当前场景参数           | [`debug.tsx`](../src/components/keyboard/debug.tsx)、[`scene-config.ts`](../src/components/keyboard/scene-config.ts)                 | 开发配方：调按压与光效 |
-| 提交前怎么验收             | [`design-qa.md`](../design-qa.md)                                                                                                    | 验证清单               |
+| 实体键盘、鼠标拖键、卡键   | [`input.ts`](../src/components/shared/input.ts)                                                                                    | 输入所有权状态机       |
+| 键帽下沉方向、键程和回弹   | [`scene.tsx`](../src/components/raycast/scene.tsx)、[`scene-config.ts`](../src/components/raycast/scene-config.ts)                 | 键帽如何模拟机械键程   |
+| RGB 范围、速度、边缘和亮度 | [`shaders.ts`](../src/components/shared/shaders.ts)、[`scene-config.ts`](../src/components/raycast/scene-config.ts)               | RGB 扩散如何计算       |
+| 雾透 UV 导入与扩散波纹 | [`keyboard-profile.ts`](../src/components/mist/keyboard-profile.ts)、[`import-model.ts`](../src/components/mist/import-model.ts) | [Mist 技术入口](#mist-技术入口2026-10-12) |
+| 某个键没有声音             | [`audio.ts`](../src/components/shared/audio.ts)、[`sound-map.ts`](../src/components/shared/sound-map.ts)                         | 音频精灵如何播放       |
+| 桌面首屏闪跳、Canvas 空白  | [`hero.tsx`](../src/components/raycast/hero.tsx)、[`scene-error-boundary.tsx`](../src/components/shared/scene-error-boundary.tsx) | Next.js 装载与降级     |
+| 移动端不应下载 3D 场景     | [`hero.tsx`](../src/components/raycast/hero.tsx)                                                                                    | 1000/1001px 分支       |
+| 调试当前场景参数           | [`debug.tsx`](../src/components/shared/debug.tsx)、[`scene-config.ts`](../src/components/raycast/scene-config.ts)                 | 开发配方：调按压与光效 |
+| 提交前怎么验收             | [验证清单](#验证清单)、[`tests/`](../tests/) | 自动检查与浏览器检查 |
 
-本地启动后，在桌面端输入 `↑ ↑ ↓ ↓ ← → ← → B A` 可以打开 Dialkit。它适合先找参数范围，再把确认后的默认值写回源码。
+本地启动后，点击右上操作栏左侧的 Dialkit 原生入口即可展开调参面板。入口默认可见，面板默认折叠；确认参数后再把默认值写回配置文件。Air75 与 Mist 工作台使用同位置的设置按钮和抽屉内面板。
 
 先把项目跑起来：
 
@@ -27,6 +28,24 @@ npm run dev
 ```
 
 浏览器打开 <http://localhost:3000>，把视口保持在 1001px 以上。先按一次实体键盘上的 A，再点击画面中的 A，最后按住鼠标拖过一排键。全文会沿着这三个输入解释同一条反馈链路。
+
+### Mist 技术入口（2026-10-12）
+
+`/nuphy-mist84` 默认展示用户提供的 1012 GLB 与 Base／RGB 两态 UV，设置抽屉保留「0923 UV」切换和本地导入。「雾透白灯」入口、五层 KTX2 加载、遮光属性与专用光学材质已移除。旧光学制作的测量和截图见[历史适配记录](mist-keyboard-adaptation.md)，不作为当前开发指南。雾透现已复用下文的 Raycast 双纹理扩散波纹，保留独立键位适配、静态结构 Base 外观及相机校准。
+
+- [`hero.tsx`](../src/components/mist/hero.tsx) 管理素材套装、上传 URL 和舞台焦点。支持 GLB、Base UV、灯光 UV 单独替换，也支持多选或拖入一组文件；批量入口按 GLB 后缀和 Base／RGB／Light 文件名识别角色，无法判断时提示使用单张入口。未替换的文件使用当前套装内置素材，单个文件上限 50 MB，刷新后恢复默认。
+- [`import-assets.ts`](../src/components/mist/import-assets.ts) 只接受对应内置路径及本地 blob URL，复用 GLB 容器和外链校验。失败、取消或部分加载成功时释放已加载资源。[`scene.tsx`](../src/components/mist/scene.tsx) 在新素材校验成功后替换预览，加载错误保留旧场景；旧资源在替换提交后释放。
+- [`import-model.ts`](../src/components/mist/import-model.ts) 的 `prepareMistImportScene` 适配 1012 六行分组的 83 个键帽和 10 个静态结构网格，按横向顺序映射 `MIST_KEY_ROWS`。作者模型的键距为 19，转换为网页约 1.9 的键距，反转前后轴并用 Escape 对齐既有舞台；同步变换法线与三角绕序，保留 UV。0923 合并网格按完全相同 XYZ 连接 UV 断缝，再分离真实键帽。独立命名模型通过 `mapMistImportedKeyCodes` 验证 83 键，未知合并结构直接报错。
+- [`keyboard-profile.ts`](../src/components/mist/keyboard-profile.ts) 的 `createMistUvMaterial` 使用 `sampler2D`，通过 Raycast 世界坐标波纹混合 Base／灯光外观；纹理为 `SRGBColorSpace`，默认 `flipY=false`，静态结构只显示 Base。键帽共享波纹中心与进度数组，每键仍独立压暗。UV 垂直翻转位于「UV 预览」分组，灯效贴图混合增益直接显示在面板中。
+- [`ansi-renderer.tsx`](../src/components/shared/ansi-renderer.tsx) 继续管理键程、输入与首帧显示。Mist 不再覆盖 `onPress`，由共享渲染器创建扩散脉冲；profile 的 `advanceLight` 只同步减少动画模式和按键状态。
+
+正常模式使用 Raycast 默认的 0.9 秒波纹、缓动指数 3 与贴图混合增益 2；雾透按键压暗比例默认 0，按下不额外变暗。雾透键距约 1.9，Raycast 约 0.19，波纹距离按十倍模型尺度换算，默认羽化宽度 0.8、最大半径 1.5。键程保留原校准值 0.16；0.25 会使 1012 帽内上层与静态轴体新增穿插。雾透两态贴图的混合比例限制在 0–1，增益 2 加速混合，但不向亮灯贴图之外外推颜色。旧视频参考下的半秒单键包络已移除。减少动画时灯效直接跟随按下与松开，不显示扩散。PNG 没有松开／压下两套光路，按键下沉不会重新计算折射；Base 同时含烘焙受光、印字和内部影像，不能称为实测 albedo 或恢复的油墨材质。
+
+产品舞台保留 `#eef0f1` 浅雾白背景、400px 高度及既有相机投影。设置抽屉开关和背景调色不改变舞台占位；全局主题只改变导航、工具栏和 Dialkit。移动端默认使用匹配当前素材的静态回退，主动使用 UV 工作台后启用交互预览。场景完整加载并实际绘制首帧后才显示。
+
+[`scene-config.ts`](../src/components/mist/scene-config.ts) 集中保存内置素材与调参默认值。`MIST_1012_SOURCES` 指向 `public/assets/mist/keyboard-1012.glb`、`texture-base-1012.png`、`texture-light-1012.png`；`MIST_UV_SOURCES` 指向 `ux-0923/` 原素材。预设值 `1012` 为默认套装，`uv` 为 0923 套装。「页面背景颜色」使用 Dialkit 原生颜色控件，可作为两色线性渐变的起点；「背景渐变」分组提供开关、终点颜色与方向，默认关闭。背景设置直接作用于页面 CSS，不重载模型。关闭抽屉后焦点回到舞台，实体按键继续可用。
+
+旧 `public/assets/mist/mist-moonbow-bright-white.blend` 仅在本地保留为可编辑历史制作源，由 Git 忽略，也不进入 Sites 发布产物。仓库不再提供原自动重烘、导出脚本及制作中间文件；历史命令不能作为当前执行步骤。
 
 ## 项目从哪里开始
 
@@ -87,10 +106,10 @@ React 管组件挂载、错误边界、媒体查询和低频 UI 状态。每帧�
 | 资源                   | 用途                             | 代码入口           |
 | ---------------------- | -------------------------------- | ------------------ |
 | `keyboard.glb`         | 键盘几何与 Mesh 名称             | `MODEL_URL`        |
-| `base.jpg`             | 未开启 RGB 时的烘焙外观          | `BASE_TEXTURE_URL` |
-| `rgb.jpg`              | 开启 RGB 后的烘焙外观            | `RGB_TEXTURE_URL`  |
+| `texture-base.jpg`             | 未开启 RGB 时的烘焙外观          | `BASE_TEXTURE_URL` |
+| `texture-rgb.jpg`              | 开启 RGB 后的烘焙外观            | `RGB_TEXTURE_URL`  |
 | `key-sounds.ogg`       | 全部按下、松开录音组成的音频精灵 | `KEY_SOUND_URL`    |
-| `keyboard-static.webp` | 移动端和 3D 失败时的静态替代     | `hero.tsx`         |
+| `render-idle.webp` | 移动端和 3D 失败时的静态替代     | `hero.tsx`         |
 
 对当前 GLB 的直接检查得到以下结果：
 
@@ -122,10 +141,10 @@ KeyboardEvent.code
 
 `Hero` 在服务端和水合初始阶段都把桌面判断设为 `false`。浏览器确认宽度达到 1001px 后，才渲染 `next/dynamic` 引入的 `Scene`。桌面舞台从一开始就保留 400px 高度，场景未就绪时只保持透明，不拿另一张尺寸不同的图临时顶替。
 
-`Scene` 中的 `Suspense` 等待 GLB 和两张纹理。`KeyboardModel` 第一次进入 `useFrame` 时调用 `onFirstFrame`，随后：
+`Scene` 中的 `Suspense` 等待 GLB 和两张纹理。`KeyboardModel` 在网格第一次实际完成绘制时，通过 `onAfterRender` 调用 `onFirstFrame`，随后：
 
 1. `renderReady` 变为 `true`；
-2. `Hero` 把背景和 Canvas 作为一个舞台淡入；
+2. `Scene` 将 `aria-busy` 设为 `false`，舞台 CSS 据此显示背景和 Canvas；
 3. 输入层从下一次渲染开始启用；
 4. `aria-busy` 结束。
 
@@ -142,7 +161,7 @@ sequenceDiagram
   participant G as GLSL
 
   W->>I: keydown, code = KeyA
-  I->>I: keyboardKeysRef.add(KeyA)
+  I->>I: keyboard.add(KeyA)
   I->>I: pressedKeysRef 从 0 变为 1
   par 声音
     I->>A: playSound(KeyA, 0)
@@ -169,13 +188,14 @@ sequenceDiagram
 
 鼠标和实体键盘可能同时按住同一枚键。如果只维护一个布尔值，任意一方先松手都会让键帽提前弹起。当前实现把“谁正在占用”与“最终是否按下”分开保存。
 
-| ref               | 含义                     |
-| ----------------- | ------------------------ |
-| `keyboardKeysRef` | 当前由实体键盘占用的键   |
-| `pointerKeysRef`  | 当前由指针占用的键       |
-| `pressedKeysRef`  | 渲染层读取的最终按下集合 |
-| `pointerKeyRef`   | 单个拖动手势当前命中的键 |
-| `pointerDownRef`  | 是否仍处于主按钮拖动状态 |
+`createKeyboardInput` 把输入状态保存在一个控制器内，`useKeyboardInput` 负责浏览器订阅和清理：
+
+| 控制器数据 | 含义 |
+| --- | --- |
+| `keyboard` | 当前由实体键盘占用的键集合 |
+| `pressed` | 最终按下集合，通过 `pressedKeysRef.current` 提供给渲染层 |
+| `pointerKey` | 单个拖动手势当前命中的键 |
+| `dragging` | 是否仍处于主按钮拖动状态 |
 
 状态规则可以写成：
 
@@ -191,7 +211,7 @@ pressed(code) = keyboardOwns(code) OR pointerOwns(code)
 
 输入层有意不调用 `preventDefault()`。焦点位于普通页面内容时，方向键与 Space 可以触发键盘反馈，同时保留页面滚动。链接、按钮、表单控件、`contenteditable`、`role="button"` 和 `role="link"` 会被过滤，原生操作不受影响。
 
-`useEventListener` 来自 `usehooks-ts`。它通过内部保存的 handler ref 读取最新回调，不会因为业务 callback 更新就反复解绑、重绑 DOM 监听。
+`useEventListener` 和 `useEventCallback` 来自 `usehooks-ts`。前者管理浏览器事件订阅，后者让稳定的控制器调用最新的声音、按下和松开回调。参数面板触发 React 重渲染时，不会重建输入所有权集合。
 
 ### 指针拖键路径
 
@@ -206,7 +226,7 @@ pressed(code) = keyboardOwns(code) OR pointerOwns(code)
 
 当前没有 `onPointerOut` 路径。指针从键帽移到 `static` 底座或空白区域时，旧键不会当场释放；它会保持到指针进入下一枚可交互键，或窗口收到 `pointerup` / `pointercancel`。如果希望拖出键帽就回弹，需要补充离开命中区域的状态转移。
 
-当前实现只保存一个 `pointerKeyRef`，没有按 `pointerId` 分配独立状态。桌面鼠标足够使用，多点触控可能互相覆盖。如果产品要支持多指演奏，应改成 `Map<pointerId, code>`，并分别处理每个指针的结束事件。
+当前实现只保存一个 `pointerKey`，没有按 `pointerId` 分配独立状态。桌面鼠标足够使用，多点触控可能互相覆盖。如果产品要支持多指演奏，应改成 `Map<pointerId, code>`，并分别处理每个指针的结束事件。
 
 ### 卡键清理
 
@@ -216,7 +236,7 @@ pressed(code) = keyboardOwns(code) OR pointerOwns(code)
 - 页面进入后台；
 - macOS 按住 Command 时，浏览器漏掉其他键的 `keyup`。
 
-`blur`、`visibilitychange` 和组件卸载都会调用 `releaseAll()`。释放 Meta 键时，`releaseKeysLostToMeta()` 会撤销所有非修饰键的键盘所有权，同时保留仍被指针占用的键。
+`blur`、`visibilitychange` 和组件卸载都会调用 `releaseAll()`。释放 Meta 键时，控制器的 `keyUp()` 会撤销所有非修饰键的键盘所有权，同时保留仍被指针占用的键。
 
 当 `enabled=false` 时，`usehooks-ts` 管理的窗口监听仍然存在；各 handler 会提前返回，effect 同时清空已有所有权。Mesh 的 `pointerEvents` 变为空对象。这里的行为是“忽略新输入并清状态”，不是“卸载全部事件监听”。
 
@@ -225,7 +245,7 @@ pressed(code) = keyboardOwns(code) OR pointerOwns(code)
 键盘每一排通常带有不同倾角，世界坐标的 `-Y` 不能代表所有键帽自身的下压方向。注册 Mesh 时，代码把局部向下向量旋转到父级坐标系：
 
 ```ts
-pressAxis: LOCAL_PRESS_AXIS.clone().applyQuaternion(child.quaternion);
+pressAxis: LOCAL_PRESS_AXIS.clone().applyQuaternion(child.quaternion)
 ```
 
 其中 `LOCAL_PRESS_AXIS = (0, -1, 0)`。每帧位置都从 `rest` 重新计算，避免连续累加造成漂移：
@@ -233,20 +253,20 @@ pressAxis: LOCAL_PRESS_AXIS.clone().applyQuaternion(child.quaternion);
 ```ts
 mesh.object.position
   .copy(mesh.rest)
-  .addScaledVector(mesh.pressAxis, mesh.depth);
+  .addScaledVector(mesh.pressAxis, mesh.depth)
 ```
 
 ### 阻尼而非线性插值
 
-目标键程只有两个值：按下时为 `controls.keyPressDepth`，松开时为 0。实际深度用 Three.js 的帧率无关阻尼逼近目标：
+目标键程只有两个值：按下时为 `controls['按压深度（模型单位）']`，松开时为 0。实际深度用 Three.js 的帧率无关阻尼逼近目标：
 
 ```ts
 mesh.depth = THREE.MathUtils.damp(
   mesh.depth,
   targetDepth,
-  controls.advanced.keyPressDamping,
+  controls["高级"]["按键收敛速率（s⁻¹）"],
   delta,
-);
+)
 ```
 
 `delta` 先被限制为 `MAX_FRAME_DELTA = 1 / 30`。标签页从后台恢复时，即使真实帧间隔很大，键帽和光效也不会一步跳到结束状态。
@@ -255,11 +275,11 @@ mesh.depth = THREE.MathUtils.damp(
 
 | 参数                | 默认值  | 作用                     |
 | ------------------- | ------- | ------------------------ |
-| `keyPressDepth`     | `0.025` | 最大键程                 |
-| `keyPressDamping`   | `55`    | 接近目标的速度           |
-| `pressedKeyDimming` | `0.4`   | 到达最大键程时的变暗幅度 |
+| `按压深度（模型单位）` | `0.025` | 最大键程 |
+| `高级 / 按键收敛速率（s⁻¹）` | `55` | 接近目标的速度 |
+| `按键压暗比例` | `0.4` | 到达最大键程时的变暗幅度 |
 
-亮度使用键程比例计算：
+以下公式用 `keyPressDepth` 和 `pressedKeyDimming` 简写对应参数；源码和 Dialkit 使用上表中的中文名称。亮度按键程比例计算：
 
 ```text
 pressedAmount = clamp(depth / keyPressDepth, 0, 1)
@@ -272,7 +292,7 @@ uDim = 1 - pressedAmount × pressedKeyDimming
 
 ### 两张烘焙纹理
 
-场景没有为每个键创建动态彩灯。`base.jpg` 保存普通外观，`rgb.jpg` 保存开启背光后的外观。Shader 在每个片元上决定两张图的混合比例。
+场景没有为每个键创建动态彩灯。`texture-base.jpg` 保存普通外观，`texture-rgb.jpg` 保存开启背光后的外观。Shader 在每个片元上决定两张图的混合比例。
 
 纹理加载后统一设置：
 
@@ -341,7 +361,7 @@ color = mix(baseColor, rgbColor, lightingMix) × uDim
 KeyA: [
   [10161, 10335], // press
   [10335, 10384], // release
-];
+]
 ```
 
 播放时创建新的 `AudioBufferSourceNode`，从共享 `AudioBuffer` 的指定 offset 开始，只播放这段 duration。多个 Source 可以并发，因此多键输入不会互相截断。
@@ -356,7 +376,7 @@ KeyA: [
 
 ### Web Audio 生命周期
 
-`useKeyAudio` 挂载时创建 `AudioContext` 和 `GainNode`，随后获取 OGG 并解码。首次用户手势到来时，如果 Context 仍是 `suspended`，会先调用 `resume()`，成功后再播放。
+`useKeyAudio` 只持有一个播放器引用。挂载时，`createKeyAudioPlayer` 创建 `AudioContext`、Gain、下载请求和活动音源集合；播放器自行管理解码 Buffer 与销毁标记。首次有效播放时，如果 Context 仍是 `suspended`，会先调用 `resume()`，成功后再播放。
 
 组件卸载时会：
 
@@ -366,6 +386,8 @@ KeyA: [
 - 断开 Gain；
 - 关闭 AudioContext。
 
+销毁操作可重复调用。若 `resume()` 在销毁后才成功，播放器会检查 `disposed`，不会创建新音源；晚到的解码结果也不会重新写入 Buffer。
+
 当前有两个需要保留在排错清单里的事实：音频尚未解码时，播放请求会直接返回，所以冷启动后的第一次按键可能无声；Gain 固定为 3，多键高频输入存在响度过高或削波风险。加载、解码和 `resume()` 错误目前被静默处理，排查无声问题时需要临时加入开发日志或浏览器断点。
 
 ## Next.js 装载、响应式与失败路径
@@ -374,7 +396,7 @@ KeyA: [
 
 `Hero` 同时提供两套视觉路径：
 
-- 1000px 及以下显示 `keyboard-static.webp`；
+- 1000px 及以下显示 `render-idle.webp`；
 - 1001px 及以上才挂载动态导入的 `Scene`。
 
 CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。两层判断缺一不可：只用 CSS 隐藏 Canvas 仍会下载和初始化 Three.js；只用 JavaScript 分支则可能在 SSR、水合和断点切换时出现几何抖动。
@@ -383,9 +405,9 @@ CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。�
 
 ### 首帧、错误和重进桌面
 
-桌面场景的可见性由 `sceneReady || sceneFailed` 决定。成功路径等首个 `useFrame`；失败路径由局部 `SceneErrorBoundary` 显示尺寸匹配的 WebP。两条路径都使用同一个 400px 舞台。
+桌面舞台通过 CSS `:has([aria-busy="false"])` 判断是否可以显示。成功路径由 `Scene` 唯一的 `renderReady` 状态驱动，网格 `onAfterRender` 才报告首帧；失败路径由局部 `SceneErrorBoundary` 显示带有同一就绪标记的静态图。两条路径使用同一个 400px 舞台。
 
-窗口缩到移动端时，effect 会重置 `sceneReady` 与 `sceneFailed`。再次回到桌面，场景必须重新完成就绪或失败握手，旧状态不会让新 Canvas 提前显示。
+窗口缩到移动端时，整个 `DesktopStage` 连同场景和错误边界卸载。再次回到桌面时重新挂载，自然得到新的首帧状态；Hero 不再保存重复的就绪、失败标记，也不需要断点 reset effect。
 
 ### 离屏与视频弹窗
 
@@ -408,16 +430,16 @@ CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。�
 
 | 数据                                     | 保存方式          | 原因                             |
 | ---------------------------------------- | ----------------- | -------------------------------- |
-| `videoOpen`、`sceneReady`、`sceneFailed` | React state       | 会改变组件树或 ARIA 状态         |
+| `videoOpen`、Scene 的 `renderReady` | React state | 改变组件树或 ARIA 状态 |
 | 媒体查询、可视区                         | `usehooks-ts`     | 通用浏览器订阅，影响低频装载决策 |
-| 当前输入所有权                           | ref 中的 `Set`    | 高频、命令式，渲染循环直接读取   |
+| 当前输入所有权 | 控制器内部的集合和字段 | 高频、命令式，渲染循环直接读取 |
 | 每键深度、Three 对象                     | 普通对象/ref      | 每帧更新，不需要 React 重渲染    |
 | 脉冲中心与进度                           | Shader uniform    | GPU 每片元读取                   |
 | Dialkit 参数                             | `useDialKit` 结果 | 调参变化再同步到 CPU 或 uniform  |
 
 项目没有为 `useMediaQuery`、`useEventListener` 或 `useIntersectionObserver` 再包一层同义 Hook；这些通用能力直接来自 `usehooks-ts`。`useKeyboardInput` 和 `useKeyAudio` 继续保留，因为它们封装的是输入所有权协议和 Web Audio 资源生命周期，删除后只会把领域逻辑散回组件。
 
-样式也遵循相同边界。`globals.css` 只放 Tailwind 入口、主题变量和命名关键帧；组件状态和响应式样式写在 Tailwind class 中。较长的动态 class 使用 `src/utils/cn.ts`，由 `cnfast` 负责条件展开和 Tailwind 冲突合并。
+样式也遵循相同边界。`globals.css` 保留主题变量、命名关键帧和已说明原因的 Dialkit 兼容规则；组件状态和响应式样式写在 Tailwind class 中。条件类与超过 150 字符的 `className` 使用共享 `cn()`，长类按布局、视觉和交互分段。
 
 ## 开发配方
 
@@ -437,22 +459,22 @@ CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。�
 
 打开 Dialkit，在 `scene-config.ts` 定义的范围内一起观察：
 
-- `keyPressDepth`：移动距离；
-- `advanced.keyPressDamping`：按下与回弹速度；
-- `pressedKeyDimming`：最大键程时的变暗程度。
+- `按压深度（模型单位）`：移动距离；
+- `高级 / 按键收敛速率（s⁻¹）`：按下与回弹速度；
+- `按键压暗比例`：最大键程时的变暗程度。
 
 键程增大但阻尼不变时，运动通常会显得更慢。确认参数后再改默认值，不要把调试面板当成持久配置来源。
 
 ### 调整 RGB 光效
 
-| 参数                  | 位置           | 作用         |
-| --------------------- | -------------- | ------------ |
-| `pulseDuration`       | CPU `useFrame` | 脉冲寿命     |
-| `pulseRadius`         | Shader uniform | 最大半径     |
-| `pulseFeather`        | Shader uniform | 圆盘边缘宽度 |
-| `pulseEasingStrength` | Shader uniform | 扩张节奏     |
-| `lightingIntensity`   | Shader uniform | RGB 混合强度 |
-| `defaultLighting`     | Shader uniform | 常驻背光比例 |
+| Dialkit 参数 | 公式简写 | 位置与作用 |
+| --- | --- | --- |
+| `波纹时长（s）` | `pulseDuration` | CPU 更新脉冲寿命 |
+| `波纹最大半径（场景单位）` | `pulseRadius` | Shader uniform，控制最大半径 |
+| `波纹羽化宽度（场景单位）` | `pulseFeather` | Shader uniform，控制边缘宽度 |
+| `波纹缓动指数` | `pulseEasingStrength` | Shader uniform，控制扩张节奏 |
+| `灯效贴图混合增益` | `lightingIntensity` | Shader uniform，控制 RGB 混合强度 |
+| `常亮权重` | `defaultLighting` | Shader uniform，控制常驻背光比例 |
 
 先用 Dialkit 确定组合，再修改 `scene-config.ts` 或 `constants.ts` 的默认值。仅调整视觉参数不需要改 GLSL 结构。
 
@@ -482,14 +504,14 @@ CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。�
 | ---------------------------- | -------------------------------------------------- | ----------------------------------------------- |
 | 鼠标点击有效，实体键无效     | GLB 根级 Mesh 名、`supportedKeys`                  | 名称是 `keys.*`、大小写不符或 Mesh 在嵌套 Group |
 | 键帽会动但没有声音           | `sound-map.ts`、Audio Buffer、Context state        | 切片缺失、尚未解码、`resume()` 失败             |
-| 第一次按键无声，之后正常     | `bufferRef` 何时写入                               | 用户输入早于 fetch 与 decode 完成               |
+| 第一次按键无声，之后正常     | 播放器 `buffer` 何时写入                               | 用户输入早于 fetch 与 decode 完成               |
 | 声音过响或爆音               | Gain、并发 Source、源文件峰值                      | Gain 固定为 3，多键录音叠加                     |
 | 键帽按下方向倾斜或横移       | Mesh quaternion、局部轴、父级变换                  | 模型轴向或层级变化                              |
-| 松手后仍有键按住             | `pointerup`、`blur`、`visibilitychange`、Meta 路径 | 结束事件丢失或多指覆盖单一 `pointerKeyRef`      |
+| 松手后仍有键按住             | `pointerup`、`blur`、`visibilitychange`、Meta 路径 | 结束事件丢失或多指覆盖单一 `pointerKey`      |
 | RGB 光斑偏离键帽             | Mesh 原点与世界 XZ                                 | 原点不在视觉中心或层级变换错误                  |
 | RGB 纹理颠倒、发灰           | `flipY`、`colorSpace`、UV                          | 纹理配置遗漏或资产 UV 变化                      |
 | 连按后早期光效消失           | `MAX_PULSES` 与环形游标                            | 超过 10 个槽位后按设计覆盖                      |
-| 桌面出现静态图换小模型的跳动 | 固定舞台、`sceneReady`、断点 class                 | 首帧前显示了尺寸不一致的 fallback               |
+| 桌面出现静态图换小模型的跳动 | 固定舞台、`renderReady`、断点 class                 | 首帧前显示了尺寸不一致的 fallback               |
 | 桌面舞台一直透明             | `onFirstFrame`、资源请求、Error Boundary           | Canvas 没有产生有效帧，失败状态也未上报         |
 | 移动端仍下载 Three.js        | dynamic import 的 JSX 条件                         | 只用 CSS 隐藏，没有阻止 Scene 挂载              |
 | 打开视频后 GPU 仍持续刷新    | `active`、`inView`、`frameloop`                    | 覆盖层状态没有传入场景                          |
@@ -508,7 +530,7 @@ CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。�
 | 离屏或视频打开后使用 demand      | 停止无意义刷新；未结束动画会停在当前进度                          |
 | 音频精灵                         | 每次 Scene 挂载只请求一个文件并解码一次；时间表必须严格匹配源文件 |
 | 只遍历 `scene.children`          | 当前根层资产可用；嵌套 Mesh 无法注册                              |
-| 单一 `pointerKeyRef`             | 鼠标拖键简单；多点触控不完整                                      |
+| 单一 `pointerKey`             | 鼠标拖键简单；多点触控不完整                                      |
 | Canvas 整体为 `role="img"`       | 辅助技术能理解场景主题，但不能逐键聚焦 3D Mesh                    |
 
 目前最值得量化的性能项是桌面空闲时的持续 GPU 成本。若后续页面内容变长，可以在“没有相机动画、按键动画或活跃脉冲”时进一步切换 demand，并在新输入时调用 `invalidate()`。这项改造需要先定义完整的活动状态，避免光效中途停止。
@@ -518,13 +540,13 @@ CSS 负责最终显示状态，`useMediaQuery` 决定是否创建 3D 组件。�
 ### 自动检查
 
 ```bash
+npm run lint
 npm run typecheck
 npm run build
-npm run test:sites
-npx react-doctor@latest
+npm test
 ```
 
-`npm run test:sites` 依赖 `npm run build` 生成的 `dist/`，不要颠倒顺序。
+`npm test` 使用 Vitest 运行全仓测试，其中 Sites 用例依赖构建生成的 `dist/`。只检查部署契约时可运行 `npm run test:sites`，同样需要先构建。
 
 ### 输入
 
@@ -534,7 +556,7 @@ npx react-doctor@latest
 - 按住多个键后切换标签页，返回后检查卡键；
 - 在 macOS 测试 Command 组合键；
 - 分别聚焦链接、按钮、input、textarea、select 和 contenteditable；
-- 确认普通页面焦点下方向键和 Space 仍保留原生滚动。
+- 确认输入层未拦截方向键和 Space 的默认行为；具体页面是否可滚动由其布局决定。
 
 ### 装载与响应式
 
@@ -557,19 +579,20 @@ npx react-doctor@latest
 
 如果第一次进入项目，按以下顺序阅读：
 
-1. [`hero.tsx`](../src/components/keyboard/hero.tsx)：从页面生命周期理解断点、首帧和降级；
-2. [`input.ts`](../src/components/keyboard/input.ts)：理解所有权集合和异常清理；
-3. [`scene.tsx`](../src/components/keyboard/scene.tsx)：连接模型注册、输入、逐帧动画与 Shader；
-4. [`shaders.ts`](../src/components/keyboard/shaders.ts)：对照公式阅读 uniform 和 GLSL；
-5. [`audio.ts`](../src/components/keyboard/audio.ts)：理解音频精灵与清理；
-6. [`scene-config.ts`](../src/components/keyboard/scene-config.ts)、[`constants.ts`](../src/components/keyboard/constants.ts)、[`sound-map.ts`](../src/components/keyboard/sound-map.ts)：核对参数和数据；
-7. [`debug.tsx`](../src/components/keyboard/debug.tsx)：查看 Konami Code 如何暴露调试面板。
+1. [`hero.tsx`](../src/components/raycast/hero.tsx)：从页面生命周期理解断点、首帧和降级；
+2. [`input.ts`](../src/components/shared/input.ts)：理解所有权集合和异常清理；
+3. [`scene.tsx`](../src/components/raycast/scene.tsx)：连接模型注册、输入、逐帧动画与 Shader；
+4. [`shaders.ts`](../src/components/shared/shaders.ts)：对照公式阅读 uniform 和 GLSL；
+5. [`audio.ts`](../src/components/shared/audio.ts)：理解音频精灵与清理；
+6. [`scene-config.ts`](../src/components/raycast/scene-config.ts)、[`constants.ts`](../src/components/shared/constants.ts)、[`sound-map.ts`](../src/components/shared/sound-map.ts)：核对参数和数据；
+7. [`debug.tsx`](../src/components/shared/debug.tsx)：查看 Dialkit 原生入口与全局主题如何衔接。
+8. [`scene-animation.ts`](../src/components/shared/scene-animation.ts)：查看共享的脉冲推进、uniform 更新与窄画幅计算。
 
 ## TSL 与 GLSL：同一套光效的两条实现路径
 
 原作文章说的 TSL 和当前项目的 GLSL 不是两种不同的光效算法。它们可以表达同一套脉冲公式，区别在于开发者如何描述 Shader，以及 Three.js 用哪条渲染管线把它交给 GPU。
 
-当前生产代码仍是 [`shaders.ts`](../src/components/keyboard/shaders.ts) 中的 GLSL `ShaderMaterial`。本章后半部的 TSL 是可供迁移实验的等价骨架，示例已用项目当前的 Three.js r185 类型检查通过，但没有接入当前页面。
+当前生产代码仍是 [`shaders.ts`](../src/components/shared/shaders.ts) 中的 GLSL `ShaderMaterial`。本章后半部的 TSL 是可供迁移实验的等价骨架，示例在编写时通过 Three.js r185 类型检查，但没有接入当前页面；后续修改不会由现有业务测试自动验证这段示例。
 
 ### 先分清“语言”和“生成器”
 
@@ -607,7 +630,7 @@ TSL 节点有更强的组合性，也能让同一套材质逻辑面向两种后�
 
 ### 当前 GLSL 实现做了什么
 
-[`shaders.ts`](../src/components/keyboard/shaders.ts) 有一段顶点 Shader 和一段片元 Shader。顶点阶段完成两件事：
+[`shaders.ts`](../src/components/shared/shaders.ts) 有一段顶点 Shader 和一段片元 Shader。顶点阶段完成两件事：
 
 ```glsl
 vUv = uv;
@@ -625,11 +648,10 @@ gl_Position = projectionMatrix * viewMatrix * worldPosition;
 下面的骨架保留了当前设计：10 个共享脉冲槽、每键独立 `dim`、世界 XZ 距离和双纹理混合。如果要进行实验，可以先放入一个 kebab-case 模块，例如 `tsl-material.ts`：
 
 ```ts
-import * as THREE from "three/webgpu";
 import {
+  float,
   Fn,
   Loop,
-  float,
   max,
   mix,
   positionWorld,
@@ -639,7 +661,8 @@ import {
   uniform,
   uniformArray,
   uv,
-} from "three/tsl";
+} from "three/tsl"
+import * as THREE from "three/webgpu"
 
 import {
   DEFAULT_LIGHTING,
@@ -648,7 +671,7 @@ import {
   PULSE_EASING_STRENGTH,
   PULSE_FEATHER,
   PULSE_RADIUS,
-} from "./constants";
+} from "./constants"
 
 export function createKeyboardTslSharedNodes() {
   return {
@@ -657,7 +680,7 @@ export function createKeyboardTslSharedNodes() {
       "vec2",
     ),
     pulseProgress: uniformArray<"float">(
-      Array<number>(MAX_PULSES).fill(1),
+      Array.from<number>({ length: MAX_PULSES }).fill(1),
       "float",
     ),
     defaultLighting: uniform(DEFAULT_LIGHTING),
@@ -665,58 +688,58 @@ export function createKeyboardTslSharedNodes() {
     easingStrength: uniform(PULSE_EASING_STRENGTH),
     feather: uniform(PULSE_FEATHER),
     maxRadius: uniform(PULSE_RADIUS),
-  };
+  }
 }
 
-type KeyboardTslSharedNodes = ReturnType<typeof createKeyboardTslSharedNodes>;
+type KeyboardTslSharedNodes = ReturnType<typeof createKeyboardTslSharedNodes>
 
 export function createKeyboardTslMaterial(
   baseTexture: THREE.Texture,
   rgbTexture: THREE.Texture,
   shared: KeyboardTslSharedNodes,
 ) {
-  const dim = uniform(1);
+  const dim = uniform(1)
 
   const pulseMask = Fn(() => {
-    const pulse = float(0).toVar("pulse");
+    const pulse = float(0).toVar("pulse")
 
     Loop(MAX_PULSES, ({ i }) => {
-      const progress = shared.pulseProgress.element(i).clamp(0, 1).toVar();
+      const progress = shared.pulseProgress.element(i).clamp(0, 1).toVar()
       const eased = float(1)
         .sub(pow(float(1).sub(progress), shared.easingStrength))
-        .toVar();
-      const radius = mix(0, shared.maxRadius, eased).toVar();
+        .toVar()
+      const radius = mix(0, shared.maxRadius, eased).toVar()
       const distanceToPulse = positionWorld.xz
         .sub(shared.pulseCenters.element(i))
         .length()
-        .toVar();
+        .toVar()
       const disc = float(1)
         .sub(smoothstep(radius, radius.add(shared.feather), distanceToPulse))
-        .toVar();
+        .toVar()
 
-      pulse.assign(max(pulse, disc.mul(float(1).sub(eased))));
-    });
+      pulse.assign(max(pulse, disc.mul(float(1).sub(eased))))
+    })
 
-    return pulse;
-  });
+    return pulse
+  })
 
-  const pulseLight = pulseMask().mul(shared.lightingIntensity);
+  const pulseLight = pulseMask().mul(shared.lightingIntensity)
   const lightingMix = mix(
     pulseLight,
     shared.lightingIntensity,
     shared.defaultLighting,
-  );
+  )
   const color = mix(
     texture(baseTexture, uv()).rgb,
     texture(rgbTexture, uv()).rgb,
     lightingMix,
-  ).mul(dim);
+  ).mul(dim)
 
-  const material = new THREE.MeshBasicNodeMaterial();
-  material.colorNode = color;
-  material.toneMapped = false;
+  const material = new THREE.MeshBasicNodeMaterial()
+  material.colorNode = color
+  material.toneMapped = false
 
-  return { material, dim };
+  return { material, dim }
 }
 ```
 
@@ -735,28 +758,28 @@ export function createKeyboardTslMaterial(
 
 `positionWorld` 让开发者不再手写 varying，但世界坐标计算没有消失，而是由节点系统按需生成。类似地，`Loop` 依然会生成 GPU 循环或等价结构；它不会把 10 次距离计算变成一次。
 
-纹理配置也要保留。`base.jpg` 和 `rgb.jpg` 仍应设置 `flipY = false` 与 `SRGBColorSpace`。TSL 可以接管节点类型和输出链路，不会自动修正错误的 UV 或纹理色彩空间。
+纹理配置也要保留。`texture-base.jpg` 和 `texture-rgb.jpg` 仍应设置 `flipY = false` 与 `SRGBColorSpace`。TSL 可以接管节点类型和输出链路，不会自动修正错误的 UV 或纹理色彩空间。
 
 ### CPU 更新逻辑不需要重写
 
 输入所有权、环形游标、键程阻尼和 `pulseDuration` 都在 CPU 侧。迁移材质时，可以保留这些逻辑，只把 uniform 的读写换成节点值：
 
 ```ts
-const pulseIndex = pulseCursorRef.current;
+const pulseIndex = runtime.pulseCursor
 
-shared.pulseCenters.array[pulseIndex].set(worldPosition.x, worldPosition.z);
-shared.pulseProgress.array[pulseIndex] = 0;
+shared.pulseCenters.array[pulseIndex].set(worldPosition.x, worldPosition.z)
+shared.pulseProgress.array[pulseIndex] = 0
 
 for (let index = 0; index < MAX_PULSES; index += 1) {
-  const progress = shared.pulseProgress.array[index];
+  const progress = shared.pulseProgress.array[index]
   shared.pulseProgress.array[index] = Math.min(
     1,
-    progress + delta / controls.pulseDuration,
-  );
+    progress + delta / controls["波纹时长（s）"],
+  )
 }
 
-shared.lightingIntensity.value = controls.lightingIntensity;
-keyMaterial.dim.value = 1 - pressedAmount * controls.pressedKeyDimming;
+shared.lightingIntensity.value = controls["灯效贴图混合增益"]
+keyMaterial.dim.value = 1 - pressedAmount * controls["按键压暗比例"]
 ```
 
 `uniformArray` 会按渲染更新数组缓冲。每帧修改 `.array` 和 `.value` 即可，不要在 `useFrame` 里重建 `Fn`、节点图或材质。每个键仍需要独立的 `dim` uniform node，脉冲数组与光效参数则应共享。
@@ -766,10 +789,10 @@ keyMaterial.dim.value = 1 - pressedAmount * controls.pressedKeyDimming;
 React Three Fiber 的 [`Canvas`](https://r3f.docs.pmnd.rs/api/canvas) 默认创建 `WebGLRenderer`，这正是当前项目的路径。要让 Node Material 面向 WebGPU，需要用异步 `gl` 工厂初始化 `WebGPURenderer`：
 
 ```tsx
-import { Canvas, extend } from "@react-three/fiber";
-import * as THREE from "three/webgpu";
+import { Canvas, extend } from "@react-three/fiber"
+import * as THREE from "three/webgpu"
 
-extend(THREE as never);
+extend(THREE as never)
 
 export function WebGpuScene() {
   return (
@@ -777,14 +800,14 @@ export function WebGpuScene() {
       gl={async (props) => {
         const renderer = new THREE.WebGPURenderer(
           props as THREE.WebGPURendererParameters,
-        );
-        await renderer.init();
-        return renderer;
+        )
+        await renderer.init()
+        return renderer
       }}
     >
       {/* 现有场景组件 */}
     </Canvas>
-  );
+  )
 }
 ```
 
