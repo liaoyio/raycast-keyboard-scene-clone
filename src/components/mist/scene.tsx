@@ -1,5 +1,6 @@
 "use client"
 
+import type { ReactNode } from "react"
 import type { MistUvSources } from "./import-assets"
 import type { MistSceneControls } from "./scene-config"
 import type { WorkbenchAssets } from "@/components/air75/workbench-assets"
@@ -9,12 +10,15 @@ import { disposeAssets } from "@/components/air75/workbench-assets"
 import { MIST_RENDER_PROFILE } from "@/components/mist/keyboard-profile"
 import { Air75AnsiKeyboard } from "@/components/shared/ansi-renderer"
 import { loadMistUvAssets } from "./import-assets"
+import { MistLoadingIndicator } from "./loading-indicator"
 import { MIST_1012_SOURCES } from "./scene-config"
 
 interface MistSceneProps {
   active?: boolean
   controls: MistSceneControls
   sources?: MistUvSources
+  fallback: ReactNode
+  showLoading?: boolean
 }
 interface PreviewState {
   assets?: WorkbenchAssets
@@ -25,13 +29,13 @@ interface PreviewState {
 
 // 默认光路保留 glTF 的 UV 方向和共享 CPU 缓存，只释放本组件创建的 GPU 视图。
 // 新素材校验成功后才替换场景，加载失败保留当前预览；取消的结果立即释放。
-export default function MistScene({ active = true, controls, sources = MIST_1012_SOURCES }: MistSceneProps) {
+export default function MistScene({ active = true, controls, sources = MIST_1012_SOURCES, fallback, showLoading = false }: MistSceneProps) {
   const [state, setState] = useState<PreviewState>({ ready: false, loading: false, error: "" })
   const { model, base, rgb } = sources
   const flipY = controls["UV 预览"]["垂直翻转 UV"]
   useEffect(() => {
     const controller = new AbortController()
-    // eslint-disable-next-line react/set-state-in-effect -- 外部素材开始加载时保留旧场景，并同步加载提示。
+    // eslint-disable-next-line react/set-state-in-effect -- 外部素材开始加载时保留旧场景，并同步加载状态。
     setState(current => ({ ...current, loading: true, error: "" }))
     loadMistUvAssets({ model, base, rgb }, flipY, controller.signal).then((assets) => {
       if (controller.signal.aborted) { disposeAssets(assets); return }
@@ -46,11 +50,11 @@ export default function MistScene({ active = true, controls, sources = MIST_1012
   const assets = state.assets
   const ready = state.ready
   return (
-    <div className="absolute inset-0 size-full touch-none" aria-busy={!ready || state.loading}>
+    <div className="absolute inset-0 size-full touch-none" aria-busy={state.loading || (!ready && !state.error)}>
       <Canvas
         flat
         camera={{ position: [0, 70, 0], fov: 12.144878 }}
-        className="opacity-0 transition-opacity duration-500 data-[ready=true]:opacity-100 motion-reduce:transition-none"
+        className="opacity-0 data-[ready=true]:opacity-100"
         data-ready={ready}
         dpr={[1, 1.75]}
         frameloop="demand"
@@ -75,7 +79,14 @@ export default function MistScene({ active = true, controls, sources = MIST_1012
           )}
         </Suspense>
       </Canvas>
-      {state.loading && <p role="status" className="pointer-events-none absolute inset-x-0 bottom-0 text-xs text-[#71797e]">正在加载模型与 UV…</p>}
+      <div
+        aria-hidden={ready}
+        data-ready={ready}
+        className="pointer-events-none absolute inset-0 opacity-100 duration-500 data-[ready=true]:opacity-0 data-[ready=true]:transition-opacity motion-reduce:transition-none"
+      >
+        {fallback}
+      </div>
+      {showLoading && (state.loading || (!ready && !state.error)) && <MistLoadingIndicator />}
       {state.error && (
         <p role="alert" className="absolute inset-x-0 bottom-0 px-6 text-xs text-red-600">
           {state.error}

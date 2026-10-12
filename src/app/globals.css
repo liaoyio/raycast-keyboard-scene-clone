@@ -75,3 +75,15 @@
   top: 26px;
   right: 118px;
 }
+
+@keyframes mist-orb-swell {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.4);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

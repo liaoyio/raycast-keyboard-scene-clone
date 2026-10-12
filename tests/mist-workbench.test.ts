@@ -27,7 +27,7 @@ interface ControlProps {
   "onChange"?: (event: { currentTarget: { files: UploadFile[], value: string } }) => void
 }
 interface RootProps { style: { backgroundColor: string, backgroundImage: string } }
-interface SceneProps { sources?: MistUvSources, controls: MistSceneControls }
+interface SceneProps { sources?: MistUvSources, controls: MistSceneControls, showLoading?: boolean }
 interface PreviewState { assets?: WorkbenchAssets, ready: boolean, loading: boolean, error: string }
 interface KeyboardProps { scene?: THREE.Group, onReady: () => void }
 interface PendingAssets {
@@ -37,6 +37,12 @@ interface PendingAssets {
 }
 
 const raycastConfig = loadModule<typeof import("../src/components/raycast/scene-config")>("raycast/scene-config.ts", { "@/components/shared/constants": loadModule("shared/constants.ts", { three: THREE }) })
+// 模拟原生输入控件；实际 DOM 的过滤另由浏览器验收。
+class EditableTarget extends EventTarget {
+  isContentEditable = false
+  closest() { return this }
+}
+
 const config = loadModule<ConfigModule>("mist/scene-config.ts", {
   "@/components/raycast/scene-config": raycastConfig,
   "@/components/shared/ansi-scene-config": loadModule("shared/ansi-scene-config.ts"),
@@ -49,8 +55,10 @@ function pageFixture() {
   const cleanups: (() => void)[] = []
   const actions: { type: string }[] = []
   const revoked: string[] = []
-  const listeners = new Map<string, (event: { key: string, defaultPrevented: boolean, stopImmediatePropagation: () => void }) => void>()
+  const listeners = new Map<string, (event: KeyboardEvent) => void>()
+  const opened: { url: string, target: string, features: string }[] = []
   const document: { activeElement?: Focusable } = {}
+  let loadingPreview: () => ReactElement
   let created = 0
   let cursor = 0
   let tree: ReactElement<RootProps>
@@ -69,6 +77,7 @@ function pageFixture() {
           slots[index] = reducer(slots[index] as State, action)
         }]
       },
+      useMemo<Value>(factory: () => Value) { const index = cursor++; return slots[index] ??= factory() },
       useRef<Value>(initial: Value) { const index = cursor++; return slots[index] ??= { current: initial } },
       useEffect(effect: () => (() => void) | void) {
         const index = cursor++
@@ -78,21 +87,22 @@ function pageFixture() {
         if (cleanup) { cleanups.push(cleanup) }
       },
     },
-    "next/dynamic": { default: () => "MistScene" },
+    "next/dynamic": { default: (_loader: unknown, options: { loading: () => ReactElement }) => { loadingPreview = options.loading; return "MistScene" } },
     "next/image": { default: "img" },
     "next-themes": { useTheme: () => ({ resolvedTheme: "light" }) },
     "dialkit": { DialRoot: "DialRoot", useDialKitController: () => dial },
     "usehooks-ts": {
       useMediaQuery: () => true,
       useIntersectionObserver: () => ({ ref() {}, isIntersecting: true }),
-      useEventListener: (name: string, handler: (event: { key: string, defaultPrevented: boolean, stopImmediatePropagation: () => void }) => void) => listeners.set(name, handler),
+      useEventListener: (name: string, handler: (event: KeyboardEvent) => void) => listeners.set(name, handler),
     },
     "@/components/icons": { Settings: "svg" },
     "@/components/shared/asset-input": loadModule("shared/asset-input.tsx"),
     "@/components/shared/scene-error-boundary": { SceneErrorBoundary: "Boundary" },
     "@/utils/cn": { cn: (...classes: unknown[]) => classes.filter(Boolean).join(" ") },
     "./scene-config": config,
-  }, { globals: { URL: {
+    "./loading-indicator": loadModule("mist/loading-indicator.tsx", { "@/utils/cn": { cn: (...classes: string[]) => classes.join(" ") } }),
+  }, { globals: { HTMLElement: EditableTarget, window: { open: (url: string, target: string, features: string) => opened.push({ url, target, features }) }, URL: {
     createObjectURL() { return `blob:uploaded-${++created}` },
     revokeObjectURL(url: string) { revoked.push(url) },
   } } })
@@ -128,7 +138,13 @@ function pageFixture() {
   }
   render()
   return {
+    loadingPreview: () => loadingPreview(),
     dial,
+    opened,
+    keyDown(key: string, options: Partial<KeyboardEvent> = {}) {
+      listeners.get("keydown")!({ key, ...options } as KeyboardEvent)
+    },
+    blur() { listeners.get("blur")!({} as KeyboardEvent) },
     actions,
     revoked,
     click,
@@ -146,13 +162,44 @@ function pageFixture() {
     },
     escape() {
       let stopped = false
-      listeners.get("keydown")!({ key: "Escape", defaultPrevented: false, stopImmediatePropagation() { stopped = true } })
+      listeners.get("keydown")!({ key: "Escape", defaultPrevented: false, stopImmediatePropagation() { stopped = true } } as KeyboardEvent)
       render()
       assert.equal(stopped, true)
     },
     unmount() { cleanups.forEach(cleanup => cleanup()) },
   }
 }
+
+it("mist easter eggs open the requested destinations once and accept uppercase English keys", () => {
+  const page = pageFixture()
+  for (const word of ["HALLOWEEN", "xmas", "nuphy"]) {
+    for (const key of word) { page.keyDown("Shift"); page.keyDown(key) }
+  }
+  assert.deepEqual(page.opened, [
+    { url: "https://youtu.be/MHIxAY98Bvg", target: "_blank", features: "noopener,noreferrer" },
+    { url: "https://youtu.be/MHIxAY98Bvg", target: "_blank", features: "noopener,noreferrer" },
+    { url: "https://nuphy.com", target: "_blank", features: "noopener,noreferrer" },
+  ])
+  page.keyDown("y", { repeat: true })
+  assert.equal(page.opened.length, 3)
+  page.unmount()
+})
+
+it("mist easter eggs ignore controls, modifiers, IME and long repeats and clear interrupted sequences", () => {
+  const page = pageFixture()
+  for (const options of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }, { isComposing: true }, { defaultPrevented: true }, { target: new EditableTarget() }]) {
+    for (const key of "xmas") { page.keyDown(key, options) }
+  }
+  assert.equal(page.opened.length, 0)
+  page.keyDown("x"); page.keyDown("m"); page.blur()
+  page.keyDown("a"); page.keyDown("s")
+  assert.equal(page.opened.length, 0)
+  for (const key of "xm as") { page.keyDown(key) }
+  assert.equal(page.opened.length, 0)
+  for (const key of "xmas") { page.keyDown(key); page.keyDown(key, { repeat: true }) }
+  assert.equal(page.opened.length, 1)
+  page.unmount()
+})
 
 it("mist aligns Raycast controls while retaining calibrated camera, model units and background settings", () => {
   const values = resolveControls(config.MIST_SCENE_CONFIG)
@@ -166,8 +213,8 @@ it("mist aligns Raycast controls while retaining calibrated camera, model units 
   assert.equal(values.相机["终点 Y（场景单位）"], 55.117985)
   assert.equal(values["按压深度（模型单位）"], 0.16, "1012 key tops intersect static geometry at the scaled Raycast depth")
   assert.equal(values["按键压暗比例"], 0)
-  assert.equal(values.页面背景颜色, "#eef0f1")
-  assert.equal(values.背景渐变.启用渐变, false)
+  assert.equal(values.页面背景颜色, "#D3E6F2")
+  assert.equal(values.背景渐变.启用渐变, true)
   assert.equal(Object.hasOwn(values, "白灯渐亮时间（s）"), false)
 })
 
@@ -219,8 +266,8 @@ it("mist partial replacements, restore, preset switch and unmount release each o
 it("mist uses native Dialkit colors and optional gradients without changing UV selections and closes settings back to the stage", () => {
   const page = pageFixture()
   assert.equal(config.MIST_SCENE_CONFIG.页面背景颜色.type, "color")
-  assert.equal(page.tree.props.style.backgroundColor, "#eef0f1")
-  assert.equal(page.tree.props.style.backgroundImage, "none")
+  assert.equal(page.tree.props.style.backgroundColor, "#D3E6F2")
+  assert.equal(page.tree.props.style.backgroundImage, "linear-gradient(180deg, #D3E6F2, #ffffff)")
   assert.equal(config.MIST_SCENE_CONFIG.背景渐变.终点颜色.type, "color")
   page.click("雾透模型与 UV 设置")
   assert.equal(page.find(({ type }) => type === "DialRoot").props.mode, "inline")
@@ -252,8 +299,8 @@ it("mist uses native Dialkit colors and optional gradients without changing UV s
   assert.equal(page.tree.props.style.backgroundColor, "oklch(0.8 0.08 180)")
   page.dial.resetValues()
   page.render()
-  assert.equal(page.tree.props.style.backgroundColor, "#eef0f1")
-  assert.equal(page.tree.props.style.backgroundImage, "none")
+  assert.equal(page.tree.props.style.backgroundColor, "#D3E6F2")
+  assert.equal(page.tree.props.style.backgroundImage, "linear-gradient(180deg, #D3E6F2, #ffffff)")
   page.unmount()
 })
 
@@ -306,6 +353,7 @@ function loaderFixture({ document = {}, failTexture = false, invalidModel = fals
     "@/components/air75/workbench-assets": shared,
     "./import-model": { prepareMistImportScene() { events.push("prepare Mist"); if (invalidModel) { throw new Error("导入模型缺少雾透键帽。") } } },
     "./scene-config": config,
+    "./loading-indicator": loadModule("mist/loading-indicator.tsx", { "@/utils/cn": { cn: (...classes: string[]) => classes.join(" ") } }),
   }, { globals })
   return { ...mist, disposeAssets: shared.disposeAssets, events }
 }
@@ -387,17 +435,18 @@ function sceneFixture() {
     "./import-assets": { loadMistUvAssets: (_sources: MistUvSources, _flipY: boolean, signal: AbortSignal) => new Promise<WorkbenchAssets>((resolve, reject) => requests.push({ signal, resolve, reject })) },
     "./import-model": {},
     "./scene-config": config,
+    "./loading-indicator": loadModule("mist/loading-indicator.tsx", { "@/utils/cn": { cn: (...classes: string[]) => classes.join(" ") } }),
   }, { globals: { AbortController, Error } })
   function render(next = sources) {
     sources = next
     cursor = 0
-    tree = Scene({ sources, controls }) as TestElement
+    tree = Scene({ sources, controls, showLoading: sources !== undefined, fallback: React.createElement("img", { alt: "loading keyboard" }) }) as TestElement
     return tree
   }
   function commit() { pendingEffects.splice(0).forEach(effect => effect()) }
   function keyboard() {
-    const canvas = tree.props.children as TestElement | [TestElement, unknown, unknown]
-    const suspense = (Array.isArray(canvas) ? canvas[0] : canvas).props.children as TestElement
+    const canvas = nodes(tree).find(node => node.type === "Canvas")!
+    const suspense = canvas.props.children as TestElement
     return suspense.props.children as TestElement<KeyboardProps>
   }
   return {
@@ -417,6 +466,51 @@ function assets(): WorkbenchAssets {
   const scene = new THREE.Group()
   return { gltf: { scene, scenes: [scene] } as WorkbenchAssets["gltf"], base: new THREE.Texture(), rgb: new THREE.Texture() }
 }
+
+it("mist never removes the loading keyboard before the first rendered frame, including errors and replacements", async () => {
+  const page = pageFixture()
+  assert.equal(nodes(page.loadingPreview()).some(node => node.type === "img" && node.props.src === "/assets/mist/render-idle.webp"), true, "dynamic module download must retain the keyboard")
+  assert.equal(nodes(page.loadingPreview()).some(node => node.props.role === "status"), false)
+  assert.equal(page.scene().showLoading, false)
+  page.click("雾透模型与 UV 设置")
+  page.click("0923 UV")
+  assert.equal(page.scene().showLoading, true)
+  page.click("1012 UV")
+  assert.equal(page.scene().showLoading, true)
+  page.unmount()
+  const scene = sceneFixture()
+  const hasFallback = () => nodes(scene.render()).some(node => node.props["data-ready"] === false && nodes(node.props.children).some(child => child.type === "img" && child.props.alt === "loading keyboard"))
+  assert.equal(hasFallback(), true, "initial mount must show a keyboard before effects or asset downloads")
+  scene.commit()
+  assert.equal(nodes(scene.render()).some(node => node.props.role === "status"), false)
+  assert.equal(hasFallback(), true)
+  scene.requests[0].reject(new Error("offline"))
+  await new Promise(setImmediate)
+  assert.equal(hasFallback(), true, "initial loading failure must retain the static keyboard")
+  assert.equal(scene.render().props["aria-busy"], false)
+  assert.equal(nodes(scene.render()).some(node => node.props.role === "status"), false)
+  scene.render(builtin)
+  scene.commit()
+  assert.equal(nodes(scene.render()).some(node => node.props.role === "status"), true)
+  const first = assets()
+  scene.requests[1].resolve(first)
+  await new Promise(setImmediate)
+  assert.equal(hasFallback(), true, "decoded assets are not a rendered frame")
+  scene.commit()
+  scene.keyboard().props.onReady()
+  assert.equal(hasFallback(), false)
+  assert.equal(nodes(scene.render()).some(node => node.props.role === "status"), false)
+  scene.render({ ...builtin, base: "blob:replacement" })
+  scene.commit()
+  assert.equal(hasFallback(), false, "keep the old live scene while downloading a replacement")
+  scene.requests[2].resolve(assets())
+  await new Promise(setImmediate)
+  assert.equal(hasFallback(), true, "replacement still needs its own rendered frame")
+  scene.commit()
+  scene.keyboard().props.onReady()
+  assert.equal(hasFallback(), false)
+  scene.unmount()
+})
 
 it("mist keeps the last good preview on failed replacement and disposes old assets only after successful commit", async () => {
   const scene = sceneFixture()

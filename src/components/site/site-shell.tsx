@@ -46,7 +46,7 @@ function layoutReducer(state: LayoutState, action: LayoutAction): LayoutState {
         ? { ...state, collapsed: !state.collapsed }
         : { ...state, mobileOpen: !state.mobileOpen }
     case "close-navigation":
-      return { ...state, mobileOpen: false }
+      return { ...state, collapsed: true, mobileOpen: false }
     case "toggle-fullscreen":
       return { ...state, fullscreen: !state.fullscreen, mobileOpen: false }
     case "escape":
@@ -70,7 +70,7 @@ export function SiteShell({ children }: { children: ReactNode }) {
   })
 
   return (
-    <div data-open={open} data-fullscreen={state.fullscreen} className="group/site min-h-dvh bg-nav-background text-nav-foreground">
+    <div data-open={open} data-fullscreen={state.fullscreen} className="group/site min-h-dvh bg-nav-background text-nav-foreground [--sidebar-width:300px]">
       {!state.fullscreen && (
         <VersionSidebar
           open={open}
@@ -81,7 +81,10 @@ export function SiteShell({ children }: { children: ReactNode }) {
         />
       )}
       <div
-        className="transition-[padding] duration-300 group-data-[open=true]/site:lg:pl-94 group-data-[fullscreen=true]/site:p-0"
+        className={cn(
+          "group-data-[open=true]/site:lg:pl-[calc(var(--sidebar-width)+8px)] group-data-[fullscreen=true]/site:p-0",
+          "transition-[padding] duration-300 motion-reduce:transition-none",
+        )}
       >
         <div className={cn(
           "relative overflow-hidden group-data-[fullscreen=true]/site:rounded-none",
@@ -123,8 +126,8 @@ function VersionSidebar({ open, mobileOpen, pathname, onToggle, onClose }: Sideb
         id="version-sidebar"
         inert={!open}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 w-72 -translate-x-full overflow-y-auto bg-nav-background px-8 pb-8 pt-25 lg:w-92",
-          "transition-transform duration-300 group-data-[open=true]/site:translate-x-0",
+          "fixed inset-y-0 left-0 z-40 w-72 -translate-x-full overflow-y-auto bg-nav-background px-8 pb-8 pt-25 lg:w-[var(--sidebar-width)]",
+          "transition-transform duration-300 group-data-[open=true]/site:translate-x-0 motion-reduce:transition-none",
         )}
       >
         <h2 className="mb-5 text-lg font-normal">🎮 Playground</h2>

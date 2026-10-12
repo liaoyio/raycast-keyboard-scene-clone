@@ -3,11 +3,11 @@ import { SCENE_CONFIG } from "@/components/raycast/scene-config"
 import { AIR75_WHITE_SCENE_CONFIG } from "@/components/shared/ansi-scene-config"
 
 export const MIST_SCENE_CONFIG = {
-  "页面背景颜色": { type: "color", default: "#eef0f1" },
+  "页面背景颜色": { type: "color", default: "#D3E6F2" },
   "背景渐变": {
     "_collapsed": true,
-    "启用渐变": false,
-    "终点颜色": { type: "color", default: "#d7e1e8" },
+    "启用渐变": true as boolean,
+    "终点颜色": { type: "color", default: "#ffffff" },
     "方向（°）": [180, 0, 360, 1],
   },
   ...SCENE_CONFIG,

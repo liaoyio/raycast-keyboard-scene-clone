@@ -7,7 +7,7 @@ import { DialRoot, useDialKitController } from "dialkit"
 import { useTheme } from "next-themes"
 import dynamic from "next/dynamic"
 import Image from "next/image"
-import { useEffect, useReducer, useRef } from "react"
+import { useEffect, useMemo, useReducer, useRef } from "react"
 import { useEventListener, useIntersectionObserver, useMediaQuery } from "usehooks-ts"
 import { Settings } from "@/components/icons"
 import { AssetInput, validateAssetFile } from "@/components/shared/asset-input"
@@ -15,10 +15,11 @@ import { SceneErrorBoundary } from "@/components/shared/scene-error-boundary"
 import { cn } from "@/utils/cn"
 import { MIST_1012_SOURCES, MIST_SCENE_CONFIG, MIST_UV_SOURCES } from "./scene-config"
 
-const MistScene = dynamic(() => import("@/components/mist/scene"), { ssr: false })
+const MistScene = dynamic(() => import("@/components/mist/scene"), { ssr: false, loading: StaticKeyboard })
 
 interface MistWorkbenchState {
   drawerOpen: boolean
+  previewRequested: boolean
   preset: "1012" | "uv"
   uploads: Partial<Record<AssetKind, LocalAsset>>
   error: string
@@ -38,12 +39,40 @@ interface SettingsPanelProps {
   onReset: () => void
 }
 
+// 只识别页面上的连续英文按键，表单、调参和系统快捷键保留原有行为。
+function createEasterEggInput() {
+  let sequence = ""
+  // 失焦或切到控件输入时，不把两段输入拼成一个关键词。
+  function reset() { sequence = "" }
+  return {
+    reset,
+    keyDown(event: KeyboardEvent) {
+      if (event.repeat) { return }
+      const target = event.target
+      if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey
+        || (target instanceof HTMLElement && (target.isContentEditable
+          || target.closest("input, textarea, select, button, a[href], [role='textbox'], [role='slider'], [role='spinbutton'], [role='combobox']")))) {
+        reset()
+        return
+      }
+      if (event.key === "Shift") { return }
+      if (!/^[a-z]$/i.test(event.key)) { reset(); return }
+      sequence = (sequence + event.key.toLowerCase()).slice(-9)
+      const url = sequence.endsWith("halloween") || sequence.endsWith("xmas")
+        ? "https://youtu.be/MHIxAY98Bvg"
+        : sequence.endsWith("nuphy") ? "https://nuphy.com" : undefined
+      if (url) { reset() }
+      return url
+    },
+  }
+}
+
 // 素材选择与错误同步更新；导入任一文件进入两态 UV 模式。
 function mistWorkbenchReducer(state: MistWorkbenchState, action: MistWorkbenchAction): MistWorkbenchState {
   switch (action.type) {
     case "drawer": return { ...state, drawerOpen: action.open }
-    case "preset": return { ...state, preset: action.preset, uploads: {}, error: "" }
-    case "assets": return { ...state, uploads: { ...state.uploads, ...action.assets }, error: "" }
+    case "preset": return { ...state, preset: action.preset, uploads: {}, error: "", previewRequested: true }
+    case "assets": return { ...state, uploads: { ...state.uploads, ...action.assets }, error: "", previewRequested: true }
     case "error": return { ...state, error: action.message }
   }
 }
@@ -68,7 +97,11 @@ function classifyMistFiles(files: File[]): Partial<Record<AssetKind, File>> {
 
 // 回退图由当前未亮灯场景生成，保持材质亮度与舞台投影。
 function StaticKeyboard() {
-  return <Image src="/assets/mist/render-idle.png" alt="Air75 V3 Moonbow Edition" width={808} height={400} className="mx-auto h-full w-auto max-w-full object-contain" priority />
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+      <Image src="/assets/mist/render-idle.webp" alt="Air75 V3 Moonbow Edition" width={1200} height={400} className="h-auto w-full max-w-[1200px] shrink-0" priority />
+    </div>
+  )
 }
 
 // 设置覆盖页面右侧，原生颜色控件和参数面板使用同一个 Dialkit 配置。
@@ -149,14 +182,16 @@ function SettingsPanel({ state, sources, onClose, onPreset, onAsset, onFiles, on
 // 页面拥有本地 URL，场景拥有解码资源；切换背景或开关设置不改变舞台尺寸。
 export function MistHero() {
   const desktop = useMediaQuery("(min-width: 1001px)", { initializeWithValue: false })
-  const [{ drawerOpen, preset, uploads, error }, dispatch] = useReducer(mistWorkbenchReducer, {
+  const [{ drawerOpen, preset, uploads, error, previewRequested }, dispatch] = useReducer(mistWorkbenchReducer, {
     drawerOpen: false,
+    previewRequested: false,
     preset: "1012",
     uploads: {},
     error: "",
   })
   const stageRef = useRef<HTMLDivElement>(null)
   const urlsRef = useRef(new Set<string>())
+  const easterEggs = useMemo(createEasterEggInput, [])
   const { ref, isIntersecting } = useIntersectionObserver({ rootMargin: "120px 0px" })
   const dial = useDialKitController("渲染设置", MIST_SCENE_CONFIG, { id: "air75-mist-scene" })
   const builtInSources = preset === "1012" ? MIST_1012_SOURCES : MIST_UV_SOURCES
@@ -170,10 +205,16 @@ export function MistHero() {
   function focusStage() { stageRef.current?.focus({ preventScroll: true }) }
   function closeDrawer() { dispatch({ type: "drawer", open: false }); focusStage() }
   useEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !drawerOpen || event.defaultPrevented) { return }
-    event.stopImmediatePropagation()
-    closeDrawer()
+    if (event.key === "Escape" && drawerOpen && !event.defaultPrevented) {
+      event.stopImmediatePropagation()
+      closeDrawer()
+      easterEggs.reset()
+      return
+    }
+    const url = easterEggs.keyDown(event)
+    if (url) { window.open(url, "_blank", "noopener,noreferrer") }
   })
+  useEventListener("blur", easterEggs.reset)
   useEffect(() => {
     const urls = urlsRef.current
     return () => { urls.forEach(url => URL.revokeObjectURL(url)) }
@@ -221,7 +262,7 @@ export function MistHero() {
 
   return (
     <section
-      className={cn("relative min-h-svh overflow-hidden text-center text-[#30363a]", "pt-[clamp(96px,13svh,120px)] pb-12")}
+      className={cn("relative min-h-svh overflow-hidden text-center text-[#30363a]", "pt-[clamp(96px,8.333vw,160px)] pb-12")}
       style={{
         "backgroundColor": dial.values.页面背景颜色,
         "backgroundImage": dial.values.背景渐变.启用渐变
@@ -246,30 +287,55 @@ export function MistHero() {
       >
         <Settings aria-hidden="true" className="size-[18px]" />
       </button>
-      <header className="relative z-10 mx-auto mb-10 flex max-w-250 flex-col items-center gap-3 px-5">
+      <header className="relative z-10 mx-auto flex max-w-250 flex-col items-center px-5">
+        <p className="text-[clamp(12px,0.9375vw,18px)] leading-none font-semibold text-[#6a6d73]">Light That Responds to You</p>
         <h1
           id="mist-title"
           className={cn(
-            "animate-[hero-enter_600ms_ease-out_100ms_both] text-[clamp(26px,3vw,32px)] leading-tight font-normal tracking-[-0.02em]",
-            "motion-reduce:animate-none",
+            "mt-[clamp(8px,0.625vw,12px)]",
+            "font-[family-name:var(--font-mona)] text-[clamp(26px,2.5vw,48px)] leading-[1.125] font-semibold tracking-[-0.02em] text-[#1c1d1f]",
+            "animate-[hero-enter_600ms_ease-out_100ms_both] motion-reduce:animate-none",
           )}
         >
-          Air75 V3 Moonbow Edition (月虹)
+          Shape the Light
+          <br />
+          Make It Respond Your Way
         </h1>
-        <p className="animate-[hero-enter_600ms_ease-out_200ms_both] text-sm text-[#71797e] motion-reduce:animate-none">白光透过雾透键帽，柔和亮起。</p>
+        <p className={cn(
+          "mt-[clamp(16px,1.667vw,32px)] max-w-[680px] text-[clamp(13px,0.9375vw,18px)] leading-[1.556] text-[#6a6d73]",
+          "animate-[hero-enter_600ms_ease-out_200ms_both] motion-reduce:animate-none",
+        )}
+        >
+          Frosted keycaps diffuse light across their entire form,
+          <br className="hidden sm:block" />
+          {" "}
+          creating a softer, more even glow.
+        </p>
+        <a
+          href="https://nuphy.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "mt-[clamp(8px,0.625vw,12px)] inline-flex items-center gap-0.5 text-[clamp(11px,0.8333vw,16px)] leading-normal text-[#575a60]",
+            "transition-colors hover:text-[#1c1d1f] focus-visible:outline-2 focus-visible:outline-offset-4",
+          )}
+        >
+          Learn More
+          <Image src="/assets/mist/learn-more-arrow.svg" alt="" width={18} height={18} />
+        </a>
       </header>
       <div ref={ref}>
         <div ref={stageRef} tabIndex={-1} aria-label="雾透键盘交互舞台" className="relative h-100 w-full outline-none">
           {desktop || preset === "uv" || Object.values(uploads).some(Boolean)
             ? (
                 <SceneErrorBoundary key={preset} fallback={<div className="absolute inset-0"><StaticKeyboard /></div>}>
-                  <MistScene active={isIntersecting} controls={dial.values} sources={sources} />
+                  <MistScene active={isIntersecting} controls={dial.values} sources={sources} fallback={<StaticKeyboard />} showLoading={previewRequested} />
                 </SceneErrorBoundary>
               )
             : <div className="absolute inset-0"><StaticKeyboard /></div>}
         </div>
       </div>
-      {drawerOpen && <SettingsPanel state={{ drawerOpen, preset, uploads, error }} sources={sources} onClose={closeDrawer} onPreset={selectPreset} onAsset={(kind, file) => applyFiles({ [kind]: file })} onFiles={importFiles} onReset={() => { dial.resetValues(); focusStage() }} />}
+      {drawerOpen && <SettingsPanel state={{ drawerOpen, preset, uploads, error, previewRequested }} sources={sources} onClose={closeDrawer} onPreset={selectPreset} onAsset={(kind, file) => applyFiles({ [kind]: file })} onFiles={importFiles} onReset={() => { dial.resetValues(); focusStage() }} />}
     </section>
   )
 }
